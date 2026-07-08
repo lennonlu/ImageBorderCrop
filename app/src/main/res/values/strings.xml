@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">图片边框裁剪</string>
+    <string name="select_image">选图</string>
+    <string name="detect_border">检测</string>
+    <string name="crop_border">裁剪保存</string>
+    <string name="border_type">边框类型</string>
+    <string name="black_border">黑边</string>
+    <string name="white_border">白边</string>
+    <string name="auto_detect">自动检测</string>
+    <string name="threshold">阈值</string>
+    <string name="original_image">原图</string>
+    <string name="cropped_image">裁剪结果</string>
+    <string name="border_info">边框信息</string>
+    <string name="no_image_selected">请先选择图片</string>
+    <string name="no_border_detected">未检测到边框</string>
+    <string name="saved_success">已保存到相册</string>
+    <string name="permission_denied">需要存储权限才能保存图片</string>
+    <string name="processing">处理中…</string>
+</resources>

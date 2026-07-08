@@ -1,0 +1,36 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Crop frame: four L-shaped corners -->
+    <!-- Top-left corner -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,38 L30,30 L46,30 L46,35 L35,35 L35,38 Z" />
+    <!-- Top-right corner -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M78,38 L78,30 L62,30 L62,35 L73,35 L73,38 Z" />
+    <!-- Bottom-left corner -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M30,70 L30,78 L46,78 L46,73 L35,73 L35,70 Z" />
+    <!-- Bottom-right corner -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M78,70 L78,78 L62,78 L62,73 L73,73 L73,70 Z" />
+
+    <!-- Scissors/cut line in middle -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M48,50 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M60,50 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:pathData="M51,50 L57,50" />
+</vector>
