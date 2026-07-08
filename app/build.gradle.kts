@@ -1,11 +1,19 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
 
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+
 android {
     namespace = "com.lennon.imagebordercrop"
     compileSdk = 34
+    buildToolsVersion = "36.0.0-rc5"
 
     defaultConfig {
         applicationId = "com.lennon.imagebordercrop"
@@ -15,6 +23,17 @@ android {
         versionName = "1.0"
     }
 
+    signingConfigs {
+        create("release") {
+            localProperties.getProperty("keystore.path")?.let {
+                storeFile = rootProject.file(it)
+                storePassword = localProperties.getProperty("keystore.password")
+                keyAlias = localProperties.getProperty("keystore.alias")
+                keyPassword = localProperties.getProperty("keystore.key.password")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -22,6 +41,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

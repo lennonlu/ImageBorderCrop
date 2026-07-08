@@ -22,3 +22,8 @@ Thumbs.db
 
 # Kotlin
 *.kotlin_module
+
+# Keystore
+*.jks
+*.keystore
+app/keystore/
