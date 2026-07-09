@@ -13,7 +13,7 @@ val localProperties = Properties().apply {
 android {
     namespace = "com.lennon.imagebordercrop"
     compileSdk = 34
-    buildToolsVersion = "36.0.0-rc5"
+    buildToolsVersion = "34.0.0"
 
     defaultConfig {
         applicationId = "com.lennon.imagebordercrop"
