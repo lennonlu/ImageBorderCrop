@@ -27,3 +27,4 @@ Thumbs.db
 *.jks
 *.keystore
 app/keystore/
+BUILD_GUIDE.md
