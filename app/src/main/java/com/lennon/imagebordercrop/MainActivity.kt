@@ -94,18 +94,13 @@ class MainActivity : AppCompatActivity() {
         // 默认选中"自动检测"
         binding.rgBorderType.check(R.id.rbAuto)
 
-        // 阈值滑块
-        binding.sbThreshold.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
-                binding.tvThresholdValue.text = progress.toString()
-                if (fromUser) invalidateDetectionResult()
-            }
-            override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
-        })
+        binding.sbThreshold.addOnChangeListener { _, value, fromUser ->
+            binding.tvThresholdValue.text = value.toInt().toString()
+            if (fromUser) invalidateDetectionResult()
+        }
 
-        binding.rgBorderType.setOnCheckedChangeListener { _, _ ->
-            invalidateDetectionResult()
+        binding.rgBorderType.addOnButtonCheckedListener { _, _, isChecked ->
+            if (isChecked) invalidateDetectionResult()
         }
 
         // 选择图片（Photo Picker）
@@ -155,19 +150,30 @@ class MainActivity : AppCompatActivity() {
             isAppearanceLightStatusBars = true
             isAppearanceLightNavigationBars = true
         }
-        ViewCompat.setOnApplyWindowInsetsListener(binding.rootScrollView) { view, windowInsets ->
+        ViewCompat.setOnApplyWindowInsetsListener(binding.rootContainer) { _, windowInsets ->
             val insets = windowInsets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
-            view.updatePadding(
+            val horizontalPadding = resources.getDimensionPixelSize(R.dimen.screen_horizontal_padding)
+            binding.rootScrollView.updatePadding(
                 left = insets.left,
                 top = insets.top,
                 right = insets.right,
-                bottom = insets.bottom
+                bottom = insets.bottom + resources.getDimensionPixelSize(
+                    R.dimen.floating_action_scroll_clearance
+                )
+            )
+            binding.bottomActionContainer.updatePadding(
+                left = insets.left + horizontalPadding,
+                top = resources.getDimensionPixelSize(R.dimen.floating_action_top_padding),
+                right = insets.right + horizontalPadding,
+                bottom = insets.bottom + resources.getDimensionPixelSize(
+                    R.dimen.floating_action_bottom_padding
+                )
             )
             windowInsets
         }
-        ViewCompat.requestApplyInsets(binding.rootScrollView)
+        ViewCompat.requestApplyInsets(binding.rootContainer)
     }
 
     private fun requestRecentImageAccess() {
@@ -289,7 +295,7 @@ class MainActivity : AppCompatActivity() {
             binding.ivRecentThumbnail.setImageResource(R.mipmap.ic_launcher)
         }
         binding.tvRecentTitle.setText(R.string.recent_image)
-        binding.tvRecentSubtitle.text = getString(R.string.recent_image_tap, recent.displayName)
+        binding.tvRecentSubtitle.setText(R.string.recent_image_tap)
         binding.cardRecentImage.isEnabled = true
     }
 
@@ -412,7 +418,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun getSelectedBorderType(): BorderType {
-        return when (binding.rgBorderType.checkedRadioButtonId) {
+        return when (binding.rgBorderType.checkedButtonId) {
             R.id.rbBlack -> BorderType.BLACK
             R.id.rbWhite -> BorderType.WHITE
             else -> BorderType.AUTO
@@ -421,7 +427,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun currentDetectionSettings(): DetectionSettings = DetectionSettings(
         borderType = getSelectedBorderType(),
-        threshold = binding.sbThreshold.progress
+        threshold = binding.sbThreshold.value.toInt()
     )
 
     private fun startDetection(saveAfterDetection: Boolean) {

@@ -4,7 +4,7 @@
     <string name="select_image">选图</string>
     <string name="recent_image">最近图片</string>
     <string name="recent_image_permission">点击允许访问图库，之后可直接选择最新图片</string>
-    <string name="recent_image_tap">点击快速选择 · %1$s</string>
+    <string name="recent_image_tap">点击使用最新图片</string>
     <string name="recent_image_unavailable">图库中暂无可访问的图片</string>
     <string name="recent_image_permission_denied">未获得图库权限，仍可使用“选图”</string>
     <string name="recent_image_description">最近图片缩略图</string>
