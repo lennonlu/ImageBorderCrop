@@ -2,6 +2,12 @@
 <resources>
     <string name="app_name">图片边框裁剪</string>
     <string name="select_image">选图</string>
+    <string name="recent_image">最近图片</string>
+    <string name="recent_image_permission">点击允许访问图库，之后可直接选择最新图片</string>
+    <string name="recent_image_tap">点击快速选择 · %1$s</string>
+    <string name="recent_image_unavailable">图库中暂无可访问的图片</string>
+    <string name="recent_image_permission_denied">未获得图库权限，仍可使用“选图”</string>
+    <string name="recent_image_description">最近图片缩略图</string>
     <string name="detect_border">检测</string>
     <string name="crop_border">裁剪保存</string>
     <string name="border_type">边框类型</string>
@@ -14,6 +20,9 @@
     <string name="border_info">边框信息</string>
     <string name="no_image_selected">请先选择图片</string>
     <string name="no_border_detected">未检测到边框</string>
+    <string name="detecting">正在检测…</string>
+    <string name="detect_failed">检测失败：%1$s</string>
+    <string name="detect_failed_short">检测失败</string>
     <string name="saved_success">已保存到相册</string>
     <string name="permission_denied">需要存储权限才能保存图片</string>
     <string name="processing">处理中…</string>

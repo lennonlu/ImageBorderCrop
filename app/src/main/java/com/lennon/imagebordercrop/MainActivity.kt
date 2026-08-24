@@ -1,21 +1,35 @@
 package com.lennon.imagebordercrop
 
+import android.Manifest
+import android.content.ContentUris
 import android.content.ContentValues
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.util.Size
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
+import androidx.lifecycle.lifecycleScope
 import com.lennon.imagebordercrop.databinding.ActivityMainBinding
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : AppCompatActivity() {
 
@@ -23,6 +37,10 @@ class MainActivity : AppCompatActivity() {
     private var currentImageUri: Uri? = null
     private var currentBitmap: Bitmap? = null
     private var lastResult: BorderResult? = null
+    private var lastDetectionSettings: DetectionSettings? = null
+    private var detectionJob: Job? = null
+    private var recentImageJob: Job? = null
+    private var recentImageUri: Uri? = null
     private val detector = BorderDetector()
 
     // 原图显示名称，用于裁剪保存时的文件命名
@@ -33,7 +51,17 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
         if (uri != null) {
-            loadImage(uri, fromShare = false)
+            loadImage(uri, takePersistablePermission = true)
+        }
+    }
+
+    private val requestRecentImagePermissions = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { permissions ->
+        if (permissions.values.any { it }) {
+            refreshRecentImage()
+        } else {
+            showRecentPermissionState(R.string.recent_image_permission_denied)
         }
     }
 
@@ -49,8 +77,19 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Color.TRANSPARENT
+        } else {
+            Color.BLACK
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        configureEdgeToEdge()
 
         // 默认选中"自动检测"
         binding.rgBorderType.check(R.id.rbAuto)
@@ -59,19 +98,30 @@ class MainActivity : AppCompatActivity() {
         binding.sbThreshold.setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: android.widget.SeekBar?, progress: Int, fromUser: Boolean) {
                 binding.tvThresholdValue.text = progress.toString()
+                if (fromUser) invalidateDetectionResult()
             }
             override fun onStartTrackingTouch(seekBar: android.widget.SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: android.widget.SeekBar?) {}
         })
+
+        binding.rgBorderType.setOnCheckedChangeListener { _, _ ->
+            invalidateDetectionResult()
+        }
 
         // 选择图片（Photo Picker）
         binding.btnSelect.setOnClickListener {
             pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
         }
 
+        binding.cardRecentImage.setOnClickListener {
+            recentImageUri?.let { uri ->
+                loadImage(uri, takePersistablePermission = false)
+            } ?: requestRecentImageAccess()
+        }
+
         // 检测边框
         binding.btnDetect.setOnClickListener {
-            detectBorder()
+            startDetection(saveAfterDetection = false)
         }
 
         // 裁剪并保存
@@ -83,10 +133,172 @@ class MainActivity : AppCompatActivity() {
         handleShareIntent(intent)
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (::binding.isInitialized) refreshRecentImage()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleShareIntent(intent)
+    }
+
+    override fun onDestroy() {
+        detectionJob?.cancel()
+        recentImageJob?.cancel()
+        super.onDestroy()
+    }
+
+    private fun configureEdgeToEdge() {
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(binding.rootScrollView) { view, windowInsets ->
+            val insets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            view.updatePadding(
+                left = insets.left,
+                top = insets.top,
+                right = insets.right,
+                bottom = insets.bottom
+            )
+            windowInsets
+        }
+        ViewCompat.requestApplyInsets(binding.rootScrollView)
+    }
+
+    private fun requestRecentImageAccess() {
+        if (hasFullRecentImageAccess()) {
+            refreshRecentImage()
+            return
+        }
+        val permissions = when {
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE -> arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            )
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU -> arrayOf(
+                Manifest.permission.READ_MEDIA_IMAGES
+            )
+            else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+        requestRecentImagePermissions.launch(permissions)
+    }
+
+    private fun hasFullRecentImageAccess(): Boolean {
+        val permission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_IMAGES
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+        return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun hasRecentImageAccess(): Boolean {
+        if (hasFullRecentImageAccess()) return true
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+            ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun refreshRecentImage() {
+        recentImageJob?.cancel()
+        if (!hasRecentImageAccess()) {
+            showRecentPermissionState(R.string.recent_image_permission)
+            return
+        }
+
+        recentImageJob = lifecycleScope.launch {
+            val recent = withContext(Dispatchers.IO) { queryMostRecentImage() }
+            if (recent == null) {
+                recentImageUri = null
+                binding.ivRecentThumbnail.setImageResource(R.mipmap.ic_launcher)
+                binding.tvRecentTitle.setText(R.string.recent_image)
+                binding.tvRecentSubtitle.setText(R.string.recent_image_unavailable)
+                binding.cardRecentImage.isEnabled = !hasFullRecentImageAccess()
+            } else {
+                showRecentImage(recent)
+            }
+        }
+    }
+
+    private fun queryMostRecentImage(): RecentImage? {
+        return try {
+            val projection = arrayOf(
+                MediaStore.Images.Media._ID,
+                MediaStore.Images.Media.DISPLAY_NAME
+            )
+            val selection = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                "${MediaStore.Images.Media.IS_PENDING} = 0"
+            } else {
+                null
+            }
+            contentResolver.query(
+                MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                projection,
+                selection,
+                null,
+                "${MediaStore.Images.Media.DATE_ADDED} DESC"
+            )?.use { cursor ->
+                if (!cursor.moveToFirst()) return null
+                val id = cursor.getLong(cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID))
+                val nameIndex = cursor.getColumnIndex(MediaStore.Images.Media.DISPLAY_NAME)
+                val displayName = if (nameIndex >= 0) cursor.getString(nameIndex) else null
+                val uri = ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, id)
+                RecentImage(uri, displayName ?: "image_$id", loadRecentThumbnail(uri))
+            }
+        } catch (exception: Exception) {
+            Log.w(TAG, "query recent image failed", exception)
+            null
+        }
+    }
+
+    private fun loadRecentThumbnail(uri: Uri): Bitmap? {
+        return try {
+            val targetSize = (96 * resources.displayMetrics.density).toInt().coerceAtLeast(96)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                contentResolver.loadThumbnail(uri, Size(targetSize, targetSize), null)
+            } else {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                var sampleSize = 1
+                while (bounds.outWidth / sampleSize > targetSize * 2 ||
+                    bounds.outHeight / sampleSize > targetSize * 2
+                ) {
+                    sampleSize *= 2
+                }
+                val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+            }
+        } catch (exception: Exception) {
+            Log.w(TAG, "load recent thumbnail failed: $uri", exception)
+            null
+        }
+    }
+
+    private fun showRecentImage(recent: RecentImage) {
+        recentImageUri = recent.uri
+        if (recent.thumbnail != null) {
+            binding.ivRecentThumbnail.setImageBitmap(recent.thumbnail)
+        } else {
+            binding.ivRecentThumbnail.setImageResource(R.mipmap.ic_launcher)
+        }
+        binding.tvRecentTitle.setText(R.string.recent_image)
+        binding.tvRecentSubtitle.text = getString(R.string.recent_image_tap, recent.displayName)
+        binding.cardRecentImage.isEnabled = true
+    }
+
+    private fun showRecentPermissionState(messageRes: Int) {
+        recentImageUri = null
+        binding.ivRecentThumbnail.setImageResource(R.mipmap.ic_launcher)
+        binding.tvRecentTitle.setText(R.string.recent_image)
+        binding.tvRecentSubtitle.setText(messageRes)
+        binding.cardRecentImage.isEnabled = true
     }
 
     /**
@@ -100,7 +312,7 @@ class MainActivity : AppCompatActivity() {
                 @Suppress("DEPRECATION")
                 intent.getParcelableExtra(Intent.EXTRA_STREAM)
             }
-            sharedUri?.let { loadImage(it, fromShare = true) }
+            sharedUri?.let { loadImage(it, takePersistablePermission = false) }
         }
     }
 
@@ -108,14 +320,15 @@ class MainActivity : AppCompatActivity() {
      * 加载图片并查询其显示名称。
      *
      * @param uri 图片 URI
-     * @param fromShare 是否来自系统"分享"。分享 URI 不能 takePersistableUriPermission，
-     *                  其读取权限仅在当前 Activity 生命周期内有效。
+     * @param takePersistablePermission Photo Picker URI 是否尝试持久化读取权限。
+     *                                  分享 URI 和 MediaStore URI 不需要执行此操作。
      */
-    private fun loadImage(uri: Uri, fromShare: Boolean = false) {
+    private fun loadImage(uri: Uri, takePersistablePermission: Boolean) {
+        invalidateDetectionResult()
         currentImageUri = uri
 
-        // Photo Picker 返回的 URI 支持持久化权限；分享来的 URI 不支持
-        if (!fromShare) {
+        // Photo Picker 返回的 URI 支持持久化权限；分享或 MediaStore URI 不支持/不需要
+        if (takePersistablePermission) {
             try {
                 contentResolver.takePersistableUriPermission(
                     uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -138,7 +351,6 @@ class MainActivity : AppCompatActivity() {
             binding.ivOriginal.setImageBitmap(bitmap)
             binding.tvBorderDetail.text = "图片尺寸: ${bitmap.width} x ${bitmap.height}"
             binding.ivCropped.setImageBitmap(null)
-            lastResult = null
         }
     }
 
@@ -207,28 +419,54 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun detectBorder() {
+    private fun currentDetectionSettings(): DetectionSettings = DetectionSettings(
+        borderType = getSelectedBorderType(),
+        threshold = binding.sbThreshold.progress
+    )
+
+    private fun startDetection(saveAfterDetection: Boolean) {
         val bitmap = currentBitmap ?: run {
             Toast.makeText(this, R.string.no_image_selected, Toast.LENGTH_SHORT).show()
             return
         }
+        val settings = currentDetectionSettings()
+        detectionJob?.cancel()
+        setDetectionInProgress(true)
+        binding.tvBorderDetail.setText(R.string.detecting)
 
-        val borderType = getSelectedBorderType()
-        val threshold = binding.sbThreshold.progress
+        detectionJob = lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.Default) {
+                    detector.detect(bitmap, settings.borderType, settings.threshold)
+                }
+                if (currentBitmap !== bitmap || currentDetectionSettings() != settings) return@launch
 
-        // 在后台线程处理大图
-        val result = detector.detect(bitmap, borderType, threshold)
-        lastResult = result
+                lastResult = result
+                lastDetectionSettings = settings
+                binding.tvBorderDetail.text = result.summary()
 
-        binding.tvBorderDetail.text = result.summary()
-
-        if (result.hasBorder()) {
-            // 预览裁剪结果
-            val cropped = detector.crop(bitmap, result)
-            binding.ivCropped.setImageBitmap(cropped)
-        } else {
-            binding.ivCropped.setImageBitmap(null)
-            Toast.makeText(this, R.string.no_border_detected, Toast.LENGTH_SHORT).show()
+                if (result.hasBorder()) {
+                    val cropped = detector.crop(bitmap, result)
+                    binding.ivCropped.setImageBitmap(cropped)
+                    if (saveAfterDetection) saveDetectedResult(bitmap, result)
+                } else {
+                    binding.ivCropped.setImageBitmap(null)
+                    Toast.makeText(this@MainActivity, R.string.no_border_detected, Toast.LENGTH_SHORT).show()
+                }
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                Log.e(TAG, "detect failed", exception)
+                if (currentBitmap === bitmap) {
+                    binding.tvBorderDetail.text = getString(R.string.detect_failed, exception.message ?: "")
+                    Toast.makeText(this@MainActivity, R.string.detect_failed_short, Toast.LENGTH_SHORT).show()
+                }
+            } finally {
+                if (detectionJob === coroutineContext[Job]) {
+                    detectionJob = null
+                    setDetectionInProgress(false)
+                }
+            }
         }
     }
 
@@ -237,19 +475,20 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.no_image_selected, Toast.LENGTH_SHORT).show()
             return
         }
-
-        val result = lastResult ?: detectBorder().let {
-            lastResult ?: run {
-                Toast.makeText(this, R.string.no_border_detected, Toast.LENGTH_SHORT).show()
-                return
-            }
+        val result = lastResult
+        if (result == null || lastDetectionSettings != currentDetectionSettings()) {
+            startDetection(saveAfterDetection = true)
+            return
         }
 
         if (!result.hasBorder()) {
             Toast.makeText(this, R.string.no_border_detected, Toast.LENGTH_SHORT).show()
             return
         }
+        saveDetectedResult(bitmap, result)
+    }
 
+    private fun saveDetectedResult(bitmap: Bitmap, result: BorderResult) {
         val cropped = detector.crop(bitmap, result)
 
         // 检查保存权限
@@ -269,8 +508,25 @@ class MainActivity : AppCompatActivity() {
     private fun saveCroppedImage() {
         val bitmap = currentBitmap ?: return
         val result = lastResult ?: return
+        if (lastDetectionSettings != currentDetectionSettings()) return
         val cropped = detector.crop(bitmap, result)
         saveCroppedImageDirect(cropped)
+    }
+
+    private fun invalidateDetectionResult() {
+        detectionJob?.cancel()
+        detectionJob = null
+        lastResult = null
+        lastDetectionSettings = null
+        if (::binding.isInitialized) {
+            binding.ivCropped.setImageBitmap(null)
+            setDetectionInProgress(false)
+        }
+    }
+
+    private fun setDetectionInProgress(inProgress: Boolean) {
+        binding.btnDetect.isEnabled = !inProgress
+        binding.btnCrop.isEnabled = !inProgress
     }
 
     /**
@@ -289,14 +545,15 @@ class MainActivity : AppCompatActivity() {
                 put(MediaStore.Images.Media.RELATIVE_PATH, saveInfo.relativePath)
             }
 
-            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-            uri?.let {
-                contentResolver.openOutputStream(it)?.use { os ->
-                    bitmap.compress(saveInfo.compressFormat, 100, os)
-                }
+            val uri = checkNotNull(
+                contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ) { "无法创建媒体文件" }
+            checkNotNull(contentResolver.openOutputStream(uri)).use { outputStream ->
+                check(bitmap.compress(saveInfo.compressFormat, 100, outputStream)) { "图片编码失败" }
             }
 
             binding.ivCropped.setImageBitmap(bitmap)
+            showRecentImage(RecentImage(uri, saveInfo.filename, bitmap))
             Toast.makeText(this, R.string.saved_success, Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
             Toast.makeText(this, "保存失败: ${e.message}", Toast.LENGTH_LONG).show()
@@ -364,6 +621,18 @@ class MainActivity : AppCompatActivity() {
     /** 原图元信息查询结果 */
     private data class OriginalFileInfo(
         val displayName: String?
+    )
+
+    private data class RecentImage(
+        val uri: Uri,
+        val displayName: String,
+        val thumbnail: Bitmap?
+    )
+
+    /** 与检测结果绑定的界面参数，参数改变后旧结果立即失效。 */
+    private data class DetectionSettings(
+        val borderType: BorderType,
+        val threshold: Int
     )
 
     /** 裁剪图保存参数 */
