@@ -73,6 +73,27 @@ class ContentRegionDetectorTest {
         assertNull(detector.detect(image, width, height))
     }
 
+    @Test
+    fun doesNotTreatBottomSubtitleBandAsTheMainImage() {
+        val width = 240
+        val height = 240
+        val image = IntArray(width * height)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val texture = (x * 7 + y * 11) % 18
+                image[y * width + x] = rgb(135 + texture, 151 + texture / 2, 118 + texture / 3)
+            }
+        }
+        fillRect(image, width, 38, 36, 202, 192, rgb(226, 137, 39))
+        fillRect(image, width, 0, 192, width, height, rgb(63, 60, 46))
+        for (left in 8 until width step 40) {
+            fillRect(image, width, left, 200, minOf(width, left + 30), 239, rgb(8, 8, 8))
+            fillRect(image, width, left + 4, 204, minOf(width, left + 26), 235, rgb(248, 248, 248))
+        }
+
+        assertNull(detector.detect(image, width, height))
+    }
+
     private fun assertRegion(
         actual: ContentRegion?,
         left: Int,

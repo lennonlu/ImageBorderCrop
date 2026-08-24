@@ -69,12 +69,11 @@ class BorderDetector(
     ): BorderResult {
         require(width > 0 && height > 0 && pixels.size >= width * height) { "图片数据无效" }
 
-        val actualType = if (borderType == BorderType.AUTO) {
-            autoDetectBorderType(pixels, width, height)
+        val colorResult = if (borderType == BorderType.AUTO) {
+            detectAutoColorBorder(pixels, width, height, threshold)
         } else {
-            borderType
+            detectColorBorder(pixels, width, height, borderType, threshold)
         }
-        val colorResult = detectColorBorder(pixels, width, height, actualType, threshold)
 
         if (borderType != BorderType.AUTO || !isSuspiciousAutoResult(pixels, width, height, colorResult)) {
             return colorResult
@@ -125,6 +124,29 @@ class BorderDetector(
         val left = scanLeftBorder(pixels, width, height, borderType, threshold)
         val right = scanRightBorder(pixels, width, height, borderType, threshold)
         return BorderResult(top, bottom, left, right, borderType, threshold)
+    }
+
+    /**
+     * 自动模式分别扫描黑边和白边，优先采用实际去除面积更大的纯色结果。
+     * 这能处理画面整体偏亮、但只有底部存在一条纯黑边的情况。
+     */
+    private fun detectAutoColorBorder(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        threshold: Int
+    ): BorderResult {
+        val blackResult = detectColorBorder(pixels, width, height, BorderType.BLACK, threshold)
+        val whiteResult = detectColorBorder(pixels, width, height, BorderType.WHITE, threshold)
+        val fullArea = width.toLong() * height
+        val blackRemovedArea = fullArea - cropArea(width, height, blackResult)
+        val whiteRemovedArea = fullArea - cropArea(width, height, whiteResult)
+        return when {
+            blackRemovedArea > whiteRemovedArea -> blackResult
+            whiteRemovedArea > blackRemovedArea -> whiteResult
+            autoDetectBorderType(pixels, width, height) == BorderType.BLACK -> blackResult
+            else -> whiteResult
+        }
     }
 
     /**

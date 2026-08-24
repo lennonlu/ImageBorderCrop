@@ -58,6 +58,22 @@ class ProvidedImageRegressionTest {
         assertEquals(DetectionStrategy.COLOR_BORDER, result.strategy)
     }
 
+    @Test
+    fun fullFrameSubtitleMemeKeepsItsThinBlackBottomBorderResult() {
+        val path = System.getenv("IMAGE_BORDER_BLACK_BOTTOM_RAW")
+        assumeTrue(!path.isNullOrBlank() && File(path).isFile)
+
+        val image = readImage(path!!)
+        val result = BorderDetector().detect(image.pixels, image.width, image.height, BorderType.AUTO, 30)
+
+        assertEquals(0, result.top)
+        assertEquals(1, result.bottom)
+        assertEquals(0, result.left)
+        assertEquals(0, result.right)
+        assertEquals(BorderType.BLACK, result.borderType)
+        assertEquals(DetectionStrategy.COLOR_BORDER, result.strategy)
+    }
+
     private fun readImage(path: String): TestImage {
         DataInputStream(FileInputStream(path).buffered()).use { input ->
             val width = input.readInt()

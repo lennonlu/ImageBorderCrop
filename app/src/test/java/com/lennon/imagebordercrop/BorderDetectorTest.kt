@@ -45,6 +45,29 @@ class BorderDetectorTest {
         assertEquals(DetectionStrategy.COLOR_BORDER, result.strategy)
     }
 
+    @Test
+    fun autoModeKeepsThinBlackBorderResultOnBrightFullFrameImage() {
+        val width = 120
+        val height = 100
+        val image = IntArray(width * height)
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val variation = (x * 7 + y * 11) % 35
+                image[y * width + x] = rgb(165 + variation, 175 + variation, 185 + variation)
+            }
+        }
+        for (x in 0 until width) image[(height - 1) * width + x] = rgb(0, 0, 0)
+
+        val result = detector.detect(image, width, height, BorderType.AUTO, 30)
+
+        assertEquals(0, result.top)
+        assertEquals(1, result.bottom)
+        assertEquals(0, result.left)
+        assertEquals(0, result.right)
+        assertEquals(BorderType.BLACK, result.borderType)
+        assertEquals(DetectionStrategy.COLOR_BORDER, result.strategy)
+    }
+
     private fun patternedImage(width: Int, height: Int, color: Int) = IntArray(width * height) { color }
 
     private fun fillPattern(image: IntArray, width: Int, left: Int, top: Int, right: Int, bottom: Int) {

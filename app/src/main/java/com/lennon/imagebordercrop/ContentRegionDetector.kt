@@ -455,6 +455,16 @@ class ContentRegionDetector {
             areaRatio < MIN_AREA_RATIO || areaRatio >= MAX_AREA_RATIO
         ) return null
 
+        // 满宽/满高照片中的字幕、水印等高对比条常会贴住三条图片边缘。面积较小时，
+        // 它们不是截图中独立的主要图片区域，不能借助图片边缘的满分边界进入候选。
+        val touchedEdges = listOf(
+            rect.left <= TILE_SIZE,
+            rect.top <= TILE_SIZE,
+            rect.right >= image.width - TILE_SIZE,
+            rect.bottom >= image.height - TILE_SIZE
+        ).count { it }
+        if (touchedEdges >= 3 && areaRatio < MIN_THREE_EDGE_AREA_RATIO) return null
+
         val top = bestHorizontalBoundaryScore(image, rect.top, rect.left, rect.right)
         val bottom = bestHorizontalBoundaryScore(image, rect.bottom, rect.left, rect.right)
         val left = bestVerticalBoundaryScore(image, rect.left, rect.top, rect.bottom)
@@ -469,6 +479,8 @@ class ContentRegionDetector {
         val activityScore = activityScore(rect, grid)
         val surroundingActivity = surroundingBandActivityScore(rect, grid)
         if (surroundingActivity >= activityScore * MAX_SURROUNDING_ACTIVITY_RATIO) return null
+        val outsideActivity = outsideActivityScore(rect, grid)
+        if (outsideActivity >= activityScore * MAX_OUTSIDE_ACTIVITY_RATIO) return null
         if (areaRatio >= LARGE_CANDIDATE_AREA_RATIO && edgeActivityScore(grid) >= activityScore * 0.8f) {
             return null
         }
@@ -526,6 +538,33 @@ class ContentRegionDetector {
         var count = 0
         for (row in outerTop..outerBottom) {
             for (column in outerLeft..outerRight) {
+                if (column in firstColumn..lastColumn && row in firstRow..lastRow) continue
+                val value = grid[column, row].activity
+                total += value
+                if (value >= ACTIVE_TILE_THRESHOLD) active++
+                count++
+            }
+        }
+        if (count == 0) return 0f
+        val meanScore = (total / count / TARGET_MEAN_ACTIVITY).coerceIn(0f, 1f)
+        val activeRatioScore = (active.toFloat() / count / TARGET_ACTIVE_RATIO).coerceIn(0f, 1f)
+        return meanScore * 0.55f + activeRatioScore * 0.45f
+    }
+
+    /**
+     * 候选之外的大部分区域仍有明显内容时，候选通常只是完整照片里的字幕、人物或水印。
+     * 截图中真正的嵌入图片，其外部通常由大面积低活跃度的页面背景或控制栏构成。
+     */
+    private fun outsideActivityScore(rect: Rect, grid: TileGrid): Float {
+        val firstColumn = (rect.left / TILE_SIZE).coerceIn(0, grid.columns - 1)
+        val lastColumn = ((rect.right - 1) / TILE_SIZE).coerceIn(firstColumn, grid.columns - 1)
+        val firstRow = (rect.top / TILE_SIZE).coerceIn(0, grid.rows - 1)
+        val lastRow = ((rect.bottom - 1) / TILE_SIZE).coerceIn(firstRow, grid.rows - 1)
+        var total = 0f
+        var active = 0
+        var count = 0
+        for (row in 0 until grid.rows) {
+            for (column in 0 until grid.columns) {
                 if (column in firstColumn..lastColumn && row in firstRow..lastRow) continue
                 val value = grid[column, row].activity
                 total += value
@@ -907,6 +946,7 @@ class ContentRegionDetector {
         private const val TARGET_ACTIVE_RATIO = 0.45f
         private const val SURROUNDING_BAND_TILES = 2
         private const val MAX_SURROUNDING_ACTIVITY_RATIO = 0.55f
+        private const val MAX_OUTSIDE_ACTIVITY_RATIO = 0.65f
 
         private const val TILE_BOUNDARY_NORMALIZER = 64f
         private const val MIN_BOUNDARY_CELL_STRENGTH = 0.28f
@@ -929,6 +969,7 @@ class ContentRegionDetector {
         private const val MIN_WIDTH_RATIO = 0.20f
         private const val MIN_HEIGHT_RATIO = 0.08f
         private const val MIN_AREA_RATIO = 0.03
+        private const val MIN_THREE_EDGE_AREA_RATIO = 0.50
         private const val MAX_AREA_RATIO = 0.98
         private const val LARGE_CANDIDATE_AREA_RATIO = 0.80
         private const val DUPLICATE_IOU = 0.85
