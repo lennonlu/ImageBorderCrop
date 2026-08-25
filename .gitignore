@@ -28,3 +28,6 @@ Thumbs.db
 *.keystore
 app/keystore/
 BUILD_GUIDE.md
+
+# Local regression materials
+TestMaterial/

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">图片边框裁剪</string>
+    <string name="app_name">来裁</string>
     <string name="select_image">选图</string>
     <string name="recent_image">最近图片</string>
     <string name="recent_image_permission">点击允许访问图库，之后可直接选择最新图片</string>
@@ -8,22 +8,39 @@
     <string name="recent_image_unavailable">图库中暂无可访问的图片</string>
     <string name="recent_image_permission_denied">未获得图库权限，仍可使用“选图”</string>
     <string name="recent_image_description">最近图片缩略图</string>
-    <string name="detect_border">检测</string>
     <string name="crop_border">裁剪保存</string>
-    <string name="border_type">边框类型</string>
-    <string name="black_border">黑边</string>
-    <string name="white_border">白边</string>
-    <string name="auto_detect">自动检测</string>
-    <string name="threshold">阈值</string>
+    <string name="threshold">强度</string>
     <string name="original_image">原图</string>
     <string name="cropped_image">裁剪结果</string>
     <string name="border_info">边框信息</string>
+    <string name="manual_adjust_hint">点击调整</string>
+    <string name="manual_adjust_title">手动调整裁剪边界</string>
+    <string name="manual_adjust_description">滑动快速定位，使用 − / + 精确微调 1px</string>
+    <string name="manual_adjust_top">上</string>
+    <string name="manual_adjust_bottom">下</string>
+    <string name="manual_adjust_left">左</string>
+    <string name="manual_adjust_right">右</string>
+    <string name="manual_adjust_decrease">减少 1px</string>
+    <string name="manual_adjust_increase">增加 1px</string>
+    <string name="manual_adjust_value">%1$dpx</string>
+    <string name="manual_adjust_reset">还原自动检测</string>
+    <string name="manual_adjust_cancel">取消</string>
+    <string name="manual_adjust_apply">应用</string>
     <string name="no_image_selected">请先选择图片</string>
+    <string name="image_load_failed">无法读取所选图片</string>
+    <string name="image_load_failed_detail">无法读取所选图片：%1$s</string>
+    <string name="loading_image">正在读取图片…</string>
     <string name="no_border_detected">未检测到边框</string>
     <string name="detecting">正在检测…</string>
+    <string name="detecting_gif_frame">正在检测 GIF：第 %1$d/%2$d 帧</string>
+    <string name="encoding_gif_frame">正在编码 GIF：第 %1$d/%2$d 帧</string>
+    <string name="saving_gif_toast">正在保存 GIF，请稍候</string>
+    <string name="saving_action">保存中…</string>
     <string name="detect_failed">检测失败：%1$s</string>
     <string name="detect_failed_short">检测失败</string>
     <string name="saved_success">已保存到相册</string>
+    <string name="save_failed">保存失败：%1$s</string>
+    <string name="save_in_progress">GIF 正在保存，请稍后再换图</string>
     <string name="permission_denied">需要存储权限才能保存图片</string>
     <string name="processing">处理中…</string>
 </resources>

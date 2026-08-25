@@ -79,68 +79,6 @@
                         <TextView
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:text="@string/border_type"
-                            android:textColor="@color/text_primary"
-                            android:textSize="13sp"
-                            android:textStyle="bold" />
-
-                        <com.google.android.material.button.MaterialButtonToggleGroup
-                            android:id="@+id/rgBorderType"
-                            android:layout_width="0dp"
-                            android:layout_height="44dp"
-                            android:layout_marginStart="10dp"
-                            android:layout_weight="1"
-                            app:selectionRequired="true"
-                            app:singleSelection="true">
-
-                            <com.google.android.material.button.MaterialButton
-                                android:id="@+id/rbAuto"
-                                style="@style/Widget.Material3.Button.OutlinedButton"
-                                android:layout_width="0dp"
-                                android:layout_height="44dp"
-                                android:layout_weight="1.35"
-                                android:ellipsize="none"
-                                android:maxLines="1"
-                                android:minWidth="0dp"
-                                android:text="@string/auto_detect"
-                                android:textSize="12sp" />
-
-                            <com.google.android.material.button.MaterialButton
-                                android:id="@+id/rbBlack"
-                                style="@style/Widget.Material3.Button.OutlinedButton"
-                                android:layout_width="0dp"
-                                android:layout_height="44dp"
-                                android:layout_weight="1"
-                                android:ellipsize="none"
-                                android:maxLines="1"
-                                android:minWidth="0dp"
-                                android:text="@string/black_border"
-                                android:textSize="12sp" />
-
-                            <com.google.android.material.button.MaterialButton
-                                android:id="@+id/rbWhite"
-                                style="@style/Widget.Material3.Button.OutlinedButton"
-                                android:layout_width="0dp"
-                                android:layout_height="44dp"
-                                android:layout_weight="1"
-                                android:ellipsize="none"
-                                android:maxLines="1"
-                                android:minWidth="0dp"
-                                android:text="@string/white_border"
-                                android:textSize="12sp" />
-                        </com.google.android.material.button.MaterialButtonToggleGroup>
-                    </LinearLayout>
-
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="44dp"
-                        android:layout_marginTop="2dp"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal">
-
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
                             android:text="@string/threshold"
                             android:textColor="@color/text_primary"
                             android:textSize="13sp"
@@ -182,25 +120,19 @@
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
-            <LinearLayout
+            <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardRecentImage"
                 android:layout_width="match_parent"
                 android:layout_height="64dp"
                 android:layout_marginTop="8dp"
-                android:orientation="horizontal">
-
-                <com.google.android.material.card.MaterialCardView
-                    android:id="@+id/cardRecentImage"
-                    android:layout_width="0dp"
-                    android:layout_height="match_parent"
-                    android:layout_weight="1"
-                    android:clickable="true"
-                    android:focusable="true"
-                    android:foreground="?attr/selectableItemBackground"
-                    app:cardBackgroundColor="@color/surface"
-                    app:cardCornerRadius="22dp"
-                    app:cardElevation="0dp"
-                    app:strokeColor="@color/outline_soft"
-                    app:strokeWidth="1dp">
+                android:clickable="true"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
+                app:cardBackgroundColor="@color/surface"
+                app:cardCornerRadius="22dp"
+                app:cardElevation="0dp"
+                app:strokeColor="@color/outline_soft"
+                app:strokeWidth="1dp">
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -223,7 +155,7 @@
                                 android:background="@color/surface_container_high"
                                 android:contentDescription="@string/recent_image_description"
                                 android:scaleType="centerCrop"
-                                android:src="@mipmap/ic_launcher" />
+                                android:src="@drawable/recent_image_placeholder" />
                         </com.google.android.material.card.MaterialCardView>
 
                         <LinearLayout
@@ -253,27 +185,17 @@
                                 android:textSize="11sp" />
                         </LinearLayout>
                     </LinearLayout>
-                </com.google.android.material.card.MaterialCardView>
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnSelect"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="104dp"
-                    android:layout_height="64dp"
-                    android:layout_marginStart="8dp"
-                    android:ellipsize="none"
-                    android:insetBottom="0dp"
-                    android:insetTop="0dp"
-                    android:maxLines="1"
-                    android:text="@string/select_image"
-                    android:textSize="14sp"
-                    app:cornerRadius="22dp" />
-            </LinearLayout>
+            </com.google.android.material.card.MaterialCardView>
 
             <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardBorderInfo"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
+                android:clickable="true"
+                android:enabled="false"
+                android:focusable="true"
+                android:foreground="?attr/selectableItemBackground"
                 app:cardBackgroundColor="@color/surface_container"
                 app:cardCornerRadius="20dp"
                 app:cardElevation="0dp"
@@ -287,14 +209,32 @@
                     android:paddingHorizontal="12dp"
                     android:paddingVertical="8dp">
 
-                    <TextView
-                        android:id="@+id/tvBorderInfo"
+                    <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:text="@string/border_info"
-                        android:textColor="@color/text_primary"
-                        android:textSize="13sp"
-                        android:textStyle="bold" />
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/tvBorderInfo"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:text="@string/border_info"
+                            android:textColor="@color/text_primary"
+                            android:textSize="13sp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/tvAdjustHint"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/manual_adjust_hint"
+                            android:textColor="@color/primary_dark"
+                            android:textSize="11sp"
+                            android:textStyle="bold"
+                            android:visibility="gone" />
+                    </LinearLayout>
 
                     <TextView
                         android:id="@+id/tvBorderDetail"
@@ -321,7 +261,7 @@
                 android:layout_height="170dp"
                 android:layout_marginTop="4dp"
                 app:cardBackgroundColor="@color/surface_container_high"
-                app:cardCornerRadius="24dp"
+                app:cardCornerRadius="14dp"
                 app:cardElevation="0dp"
                 app:strokeWidth="0dp">
 
@@ -344,11 +284,12 @@
                 android:textStyle="bold" />
 
             <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardCroppedPreview"
                 android:layout_width="match_parent"
                 android:layout_height="170dp"
                 android:layout_marginTop="4dp"
                 app:cardBackgroundColor="@color/surface_container_high"
-                app:cardCornerRadius="24dp"
+                app:cardCornerRadius="8dp"
                 app:cardElevation="0dp"
                 app:strokeWidth="0dp">
 
@@ -361,6 +302,16 @@
             </com.google.android.material.card.MaterialCardView>
         </LinearLayout>
     </ScrollView>
+
+    <View
+        android:id="@+id/statusBarScrim"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_gravity="top"
+        android:alpha="0"
+        android:background="@drawable/bg_status_bar_fade"
+        android:clickable="false"
+        android:importantForAccessibility="no" />
 
     <FrameLayout
         android:id="@+id/bottomActionContainer"
@@ -380,14 +331,14 @@
             android:orientation="horizontal">
 
             <com.google.android.material.button.MaterialButton
-                android:id="@+id/btnDetect"
+                android:id="@+id/btnSelect"
                 android:layout_width="0dp"
                 android:layout_height="56dp"
                 android:layout_weight="1.12"
                 android:elevation="0dp"
                 android:ellipsize="none"
                 android:maxLines="1"
-                android:text="@string/detect_border"
+                android:text="@string/select_image"
                 app:cornerRadius="28dp" />
 
             <com.google.android.material.button.MaterialButton
@@ -404,4 +355,5 @@
                 app:cornerRadius="28dp" />
         </LinearLayout>
     </FrameLayout>
+
 </FrameLayout>

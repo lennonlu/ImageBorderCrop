@@ -11,9 +11,12 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.MediaStore
 import android.util.Size
 import android.util.Log
+import android.view.View
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -22,26 +25,45 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
+import com.bumptech.glide.Glide
 import com.lennon.imagebordercrop.databinding.ActivityMainBinding
+import com.lennon.imagebordercrop.databinding.BottomSheetCropAdjustmentBinding
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.slider.Slider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import kotlin.math.roundToInt
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private var currentImageUri: Uri? = null
-    private var currentBitmap: Bitmap? = null
+    private var currentImage: LoadedImage? = null
     private var lastResult: BorderResult? = null
+    private var automaticResult: BorderResult? = null
     private var lastDetectionSettings: DetectionSettings? = null
     private var detectionJob: Job? = null
+    private var automaticDetectionJob: Job? = null
     private var recentImageJob: Job? = null
+    private var imageLoadJob: Job? = null
+    private var saveJob: Job? = null
+    private var cropAdjustmentDialog: BottomSheetDialog? = null
+    private var staticCroppedPreview: Bitmap? = null
     private var recentImageUri: Uri? = null
+    private var recentImageSelectable = true
     private val detector = BorderDetector()
+    private val gifProcessor = GifProcessor(detector)
 
     // 原图显示名称，用于裁剪保存时的文件命名
     private var originalDisplayName: String? = null
@@ -90,17 +112,11 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         configureEdgeToEdge()
-
-        // 默认选中"自动检测"
-        binding.rgBorderType.check(R.id.rbAuto)
+        cleanStaleCacheFiles()
 
         binding.sbThreshold.addOnChangeListener { _, value, fromUser ->
             binding.tvThresholdValue.text = value.toInt().toString()
-            if (fromUser) invalidateDetectionResult()
-        }
-
-        binding.rgBorderType.addOnButtonCheckedListener { _, _, isChecked ->
-            if (isChecked) invalidateDetectionResult()
+            if (fromUser) scheduleAutomaticDetection()
         }
 
         // 选择图片（Photo Picker）
@@ -114,9 +130,8 @@ class MainActivity : AppCompatActivity() {
             } ?: requestRecentImageAccess()
         }
 
-        // 检测边框
-        binding.btnDetect.setOnClickListener {
-            startDetection(saveAfterDetection = false)
+        binding.cardBorderInfo.setOnClickListener {
+            showCropAdjustmentPanel()
         }
 
         // 裁剪并保存
@@ -140,8 +155,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        imageLoadJob?.cancel()
         detectionJob?.cancel()
+        automaticDetectionJob?.cancel()
         recentImageJob?.cancel()
+        saveJob?.cancel()
+        cropAdjustmentDialog?.setOnDismissListener(null)
+        cropAdjustmentDialog?.dismiss()
+        cropAdjustmentDialog = null
+        clearCurrentImage()
         super.onDestroy()
     }
 
@@ -171,7 +193,19 @@ class MainActivity : AppCompatActivity() {
                     R.dimen.floating_action_bottom_padding
                 )
             )
+            binding.statusBarScrim.updateLayoutParams {
+                height = insets.top + resources.getDimensionPixelSize(
+                    R.dimen.status_bar_fade_extension
+                )
+            }
             windowInsets
+        }
+        val fadeScrollDistance = resources.getDimensionPixelSize(
+            R.dimen.status_bar_fade_scroll_distance
+        ).coerceAtLeast(1)
+        binding.rootScrollView.setOnScrollChangeListener { _, _, scrollY, _, _ ->
+            binding.statusBarScrim.alpha =
+                (scrollY.toFloat() / fadeScrollDistance).coerceIn(0f, 1f)
         }
         ViewCompat.requestApplyInsets(binding.rootContainer)
     }
@@ -223,10 +257,11 @@ class MainActivity : AppCompatActivity() {
             val recent = withContext(Dispatchers.IO) { queryMostRecentImage() }
             if (recent == null) {
                 recentImageUri = null
-                binding.ivRecentThumbnail.setImageResource(R.mipmap.ic_launcher)
+                binding.ivRecentThumbnail.setImageResource(R.drawable.recent_image_placeholder)
                 binding.tvRecentTitle.setText(R.string.recent_image)
                 binding.tvRecentSubtitle.setText(R.string.recent_image_unavailable)
-                binding.cardRecentImage.isEnabled = !hasFullRecentImageAccess()
+                recentImageSelectable = !hasFullRecentImageAccess()
+                updateActionState()
             } else {
                 showRecentImage(recent)
             }
@@ -292,19 +327,21 @@ class MainActivity : AppCompatActivity() {
         if (recent.thumbnail != null) {
             binding.ivRecentThumbnail.setImageBitmap(recent.thumbnail)
         } else {
-            binding.ivRecentThumbnail.setImageResource(R.mipmap.ic_launcher)
+            binding.ivRecentThumbnail.setImageResource(R.drawable.recent_image_placeholder)
         }
         binding.tvRecentTitle.setText(R.string.recent_image)
         binding.tvRecentSubtitle.setText(R.string.recent_image_tap)
-        binding.cardRecentImage.isEnabled = true
+        recentImageSelectable = true
+        updateActionState()
     }
 
     private fun showRecentPermissionState(messageRes: Int) {
         recentImageUri = null
-        binding.ivRecentThumbnail.setImageResource(R.mipmap.ic_launcher)
+        binding.ivRecentThumbnail.setImageResource(R.drawable.recent_image_placeholder)
         binding.tvRecentTitle.setText(R.string.recent_image)
         binding.tvRecentSubtitle.setText(messageRes)
-        binding.cardRecentImage.isEnabled = true
+        recentImageSelectable = true
+        updateActionState()
     }
 
     /**
@@ -330,8 +367,17 @@ class MainActivity : AppCompatActivity() {
      *                                  分享 URI 和 MediaStore URI 不需要执行此操作。
      */
     private fun loadImage(uri: Uri, takePersistablePermission: Boolean) {
+        if (saveJob != null) {
+            Toast.makeText(this, R.string.save_in_progress, Toast.LENGTH_SHORT).show()
+            return
+        }
+        imageLoadJob?.cancel()
         invalidateDetectionResult()
-        currentImageUri = uri
+        clearCurrentImage()
+        currentImageUri = null
+        originalDisplayName = null
+        binding.tvBorderDetail.setText(R.string.loading_image)
+        updateActionState()
 
         // Photo Picker 返回的 URI 支持持久化权限；分享或 MediaStore URI 不支持/不需要
         if (takePersistablePermission) {
@@ -344,19 +390,96 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 查询原图显示名称，用于后续保存时的文件命名
-        val fileInfo = queryOriginalFileInfo(uri)
-        originalDisplayName = fileInfo.displayName
+        imageLoadJob = lifecycleScope.launch {
+            var loadedImage: LoadedImage? = null
+            try {
+                val loaded = withContext(Dispatchers.IO) {
+                    val info = queryOriginalFileInfo(uri)
+                    val isGif = contentResolver.openInputStream(uri)?.use(gifProcessor::hasGifSignature)
+                        ?: error("无法打开所选图片")
+                    val image = if (isGif) {
+                        contentResolver.openInputStream(uri)?.use { input ->
+                            gifProcessor.loadGif(input, cacheDir)
+                        } ?: error("无法打开 GIF")
+                    } else {
+                        val bitmap = contentResolver.openInputStream(uri)?.use {
+                            BitmapFactory.decodeStream(it)
+                        } ?: error("图片解码失败")
+                        LoadedImage.Static(bitmap)
+                    }
+                    image to info
+                }
+                loadedImage = loaded.first
+                if (imageLoadJob !== coroutineContext[Job]) return@launch
 
-        // 解码图片（按原始尺寸）
-        val inputStream = contentResolver.openInputStream(uri)
-        currentBitmap = BitmapFactory.decodeStream(inputStream)
-        inputStream?.close()
+                currentImageUri = uri
+                originalDisplayName = loaded.second.displayName
+                currentImage = loaded.first
+                loadedImage = null
+                showOriginalPreview(loaded.first)
+                binding.tvBorderDetail.text = when (val image = loaded.first) {
+                    is LoadedImage.Static -> "图片尺寸: ${image.width} x ${image.height}"
+                    is LoadedImage.Gif ->
+                        "GIF 尺寸: ${image.width} x ${image.height} · ${image.metadata.frameCount} 帧"
+                }
+                startDetection(saveAfterDetection = false)
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                Log.w(TAG, "load image failed: $uri", exception)
+                binding.tvBorderDetail.text = getString(
+                    R.string.image_load_failed_detail,
+                    exception.message ?: getString(R.string.image_load_failed)
+                )
+                Toast.makeText(this@MainActivity, R.string.image_load_failed, Toast.LENGTH_SHORT).show()
+            } finally {
+                loadedImage?.let(::disposeLoadedImage)
+                if (imageLoadJob === coroutineContext[Job]) {
+                    imageLoadJob = null
+                    updateActionState()
+                }
+            }
+        }
+        updateActionState()
+    }
 
-        currentBitmap?.let { bitmap ->
-            binding.ivOriginal.setImageBitmap(bitmap)
-            binding.tvBorderDetail.text = "图片尺寸: ${bitmap.width} x ${bitmap.height}"
-            binding.ivCropped.setImageBitmap(null)
+    private fun showOriginalPreview(image: LoadedImage) {
+        Glide.with(this).clear(binding.ivOriginal)
+        when (image) {
+            is LoadedImage.Static -> binding.ivOriginal.setImageBitmap(image.bitmap)
+            is LoadedImage.Gif -> Glide.with(this)
+                .asGif()
+                .load(image.sourceFile)
+                .into(binding.ivOriginal)
+        }
+        clearCroppedPreview()
+    }
+
+    private fun clearCurrentImage() {
+        if (::binding.isInitialized) {
+            Glide.with(this).clear(binding.ivOriginal)
+            clearCroppedPreview()
+            binding.ivOriginal.setImageDrawable(null)
+        }
+        currentImage?.let(::disposeLoadedImage)
+        currentImage = null
+    }
+
+    private fun disposeLoadedImage(image: LoadedImage) {
+        when (image) {
+            is LoadedImage.Static -> if (!image.bitmap.isRecycled) image.bitmap.recycle()
+            is LoadedImage.Gif -> {
+                if (!image.previewFrame.isRecycled) image.previewFrame.recycle()
+                image.sourceFile.delete()
+            }
+        }
+    }
+
+    private fun cleanStaleCacheFiles() {
+        cacheDir.listFiles()?.forEach { file ->
+            if (file.name.startsWith("image_border_crop_") || file.name.startsWith("cropped_")) {
+                file.delete()
+            }
         }
     }
 
@@ -417,67 +540,353 @@ class MainActivity : AppCompatActivity() {
         return nameWithoutExt.all { it.isDigit() }
     }
 
-    private fun getSelectedBorderType(): BorderType {
-        return when (binding.rgBorderType.checkedButtonId) {
-            R.id.rbBlack -> BorderType.BLACK
-            R.id.rbWhite -> BorderType.WHITE
-            else -> BorderType.AUTO
-        }
-    }
-
     private fun currentDetectionSettings(): DetectionSettings = DetectionSettings(
-        borderType = getSelectedBorderType(),
+        borderType = BorderType.AUTO,
         threshold = binding.sbThreshold.value.toInt()
     )
 
+    private fun scheduleAutomaticDetection() {
+        invalidateDetectionResult()
+        if (currentImage == null) return
+        automaticDetectionJob = lifecycleScope.launch {
+            delay(AUTOMATIC_DETECTION_DEBOUNCE_MS)
+            automaticDetectionJob = null
+            startDetection(saveAfterDetection = false)
+        }
+    }
+
     private fun startDetection(saveAfterDetection: Boolean) {
-        val bitmap = currentBitmap ?: run {
+        val image = currentImage ?: run {
             Toast.makeText(this, R.string.no_image_selected, Toast.LENGTH_SHORT).show()
             return
         }
         val settings = currentDetectionSettings()
         detectionJob?.cancel()
-        setDetectionInProgress(true)
+        updateActionState()
         binding.tvBorderDetail.setText(R.string.detecting)
 
         detectionJob = lifecycleScope.launch {
             try {
-                val result = withContext(Dispatchers.Default) {
-                    detector.detect(bitmap, settings.borderType, settings.threshold)
+                val result = when (image) {
+                    is LoadedImage.Static -> withContext(Dispatchers.Default) {
+                        detector.detect(image.bitmap, settings.borderType, settings.threshold)
+                    }
+                    is LoadedImage.Gif -> withContext(Dispatchers.Default) {
+                        gifProcessor.detect(image, settings.threshold) { current, total ->
+                            withContext(Dispatchers.Main.immediate) {
+                                if (currentImage === image && currentDetectionSettings() == settings) {
+                                    binding.tvBorderDetail.text = getString(
+                                        R.string.detecting_gif_frame,
+                                        current,
+                                        total
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
-                if (currentBitmap !== bitmap || currentDetectionSettings() != settings) return@launch
+                if (currentImage !== image || currentDetectionSettings() != settings) return@launch
 
+                automaticResult = result
                 lastResult = result
                 lastDetectionSettings = settings
                 binding.tvBorderDetail.text = result.summary()
 
                 if (result.hasBorder()) {
-                    val cropped = detector.crop(bitmap, result)
-                    binding.ivCropped.setImageBitmap(cropped)
-                    if (saveAfterDetection) saveDetectedResult(bitmap, result)
+                    showCroppedPreview(image, result)
+                    if (saveAfterDetection) saveDetectedResult(image, result)
                 } else {
-                    binding.ivCropped.setImageBitmap(null)
-                    Toast.makeText(this@MainActivity, R.string.no_border_detected, Toast.LENGTH_SHORT).show()
+                    clearCroppedPreview()
+                    if (saveAfterDetection) {
+                        Toast.makeText(this@MainActivity, R.string.no_border_detected, Toast.LENGTH_SHORT).show()
+                    }
                 }
             } catch (exception: CancellationException) {
                 throw exception
             } catch (exception: Exception) {
                 Log.e(TAG, "detect failed", exception)
-                if (currentBitmap === bitmap) {
+                if (currentImage === image) {
                     binding.tvBorderDetail.text = getString(R.string.detect_failed, exception.message ?: "")
                     Toast.makeText(this@MainActivity, R.string.detect_failed_short, Toast.LENGTH_SHORT).show()
                 }
             } finally {
                 if (detectionJob === coroutineContext[Job]) {
                     detectionJob = null
-                    setDetectionInProgress(false)
+                    updateActionState()
                 }
+            }
+        }
+        updateActionState()
+    }
+
+    private fun showCroppedPreview(image: LoadedImage, result: BorderResult) {
+        clearCroppedPreview()
+        when (image) {
+            is LoadedImage.Static -> {
+                val preview = detector.crop(image.bitmap, result)
+                if (preview !== image.bitmap) staticCroppedPreview = preview
+                binding.ivCropped.setImageBitmap(preview)
+            }
+            is LoadedImage.Gif -> {
+                val cropWidth = image.width - result.left - result.right
+                val cropHeight = image.height - result.top - result.bottom
+                Glide.with(this)
+                    .asGif()
+                    .load(image.sourceFile)
+                    .transform(
+                        GifCropTransformation(
+                            result.left,
+                            result.top,
+                            cropWidth,
+                            cropHeight
+                        )
+                    )
+                    .into(binding.ivCropped)
             }
         }
     }
 
+    private fun clearCroppedPreview() {
+        Glide.with(this).clear(binding.ivCropped)
+        binding.ivCropped.setImageDrawable(null)
+        staticCroppedPreview?.let { preview ->
+            if (!preview.isRecycled) preview.recycle()
+        }
+        staticCroppedPreview = null
+    }
+
+    private fun restoreCroppedPreview(image: LoadedImage, result: BorderResult) {
+        if (result.hasBorder() || result.manuallyAdjusted) {
+            showCroppedPreview(image, result)
+        } else {
+            clearCroppedPreview()
+        }
+    }
+
+    private fun configureAdjustmentDialogWindow(dialog: BottomSheetDialog, sheetRoot: View) {
+        dialog.window?.let { sheetWindow ->
+            val surfaceColor = ContextCompat.getColor(this, R.color.surface)
+            WindowCompat.setDecorFitsSystemWindows(sheetWindow, false)
+            sheetWindow.navigationBarColor = surfaceColor
+            sheetWindow.setDimAmount(MANUAL_SHEET_DIM_AMOUNT)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                sheetWindow.navigationBarDividerColor = surfaceColor
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                sheetWindow.isNavigationBarContrastEnforced = false
+            }
+            WindowCompat.getInsetsController(sheetWindow, sheetRoot).apply {
+                isAppearanceLightNavigationBars = true
+            }
+        }
+    }
+
+    private fun showCropAdjustmentPanel() {
+        val image = currentImage ?: return
+        val original = lastResult ?: return
+        if (imageLoadJob != null || detectionJob != null || saveJob != null) return
+        val automatic = automaticResult ?: original.copy(manuallyAdjusted = false)
+
+        cropAdjustmentDialog?.dismiss()
+        val sheet = BottomSheetCropAdjustmentBinding.inflate(layoutInflater)
+        val dialog = BottomSheetDialog(this)
+        dialog.setContentView(sheet.root)
+        configureAdjustmentDialogWindow(dialog, sheet.root)
+        cropAdjustmentDialog = dialog
+
+        val state = CropAdjustmentState(image.width, image.height, original, automatic)
+        val originalScrollBottomPadding = binding.rootScrollView.paddingBottom
+        val controls = listOf(
+            CropControl(
+                CropSide.TOP,
+                R.string.manual_adjust_top,
+                sheet.rowTop.tvSideLabel,
+                sheet.rowTop.sliderCrop,
+                sheet.rowTop.btnMinus,
+                sheet.rowTop.btnPlus,
+                sheet.rowTop.tvValue
+            ),
+            CropControl(
+                CropSide.BOTTOM,
+                R.string.manual_adjust_bottom,
+                sheet.rowBottom.tvSideLabel,
+                sheet.rowBottom.sliderCrop,
+                sheet.rowBottom.btnMinus,
+                sheet.rowBottom.btnPlus,
+                sheet.rowBottom.tvValue
+            ),
+            CropControl(
+                CropSide.LEFT,
+                R.string.manual_adjust_left,
+                sheet.rowLeft.tvSideLabel,
+                sheet.rowLeft.sliderCrop,
+                sheet.rowLeft.btnMinus,
+                sheet.rowLeft.btnPlus,
+                sheet.rowLeft.tvValue
+            ),
+            CropControl(
+                CropSide.RIGHT,
+                R.string.manual_adjust_right,
+                sheet.rowRight.tvSideLabel,
+                sheet.rowRight.sliderCrop,
+                sheet.rowRight.btnMinus,
+                sheet.rowRight.btnPlus,
+                sheet.rowRight.tvValue
+            )
+        )
+        var rendering = false
+        var applied = false
+        var previewJob: Job? = null
+
+        fun adjustedResult(): BorderResult = state.toResult(original)
+
+        fun showPreviewNow() {
+            previewJob?.cancel()
+            previewJob = null
+            if (currentImage === image && lastResult === original) {
+                val result = adjustedResult()
+                binding.tvBorderDetail.text = result.summary()
+                showCroppedPreview(image, result)
+            }
+        }
+
+        fun schedulePreview() {
+            previewJob?.cancel()
+            previewJob = lifecycleScope.launch {
+                delay(MANUAL_PREVIEW_DEBOUNCE_MS)
+                showPreviewNow()
+            }
+        }
+
+        fun renderControls() {
+            rendering = true
+            controls.forEach { control ->
+                val value = state.value(control.side)
+                val maximum = state.maximum(control.side)
+                control.value.text = getString(R.string.manual_adjust_value, value)
+                control.minus.isEnabled = value > 0
+                control.plus.isEnabled = value < maximum
+                control.slider.valueFrom = 0f
+                control.slider.valueTo = maxOf(1, state.rangeMaximum(control.side)).toFloat()
+                control.slider.isEnabled = state.rangeMaximum(control.side) > 0
+                if (control.slider.value.roundToInt() != value) {
+                    control.slider.value = value.toFloat()
+                }
+            }
+            rendering = false
+            binding.tvBorderDetail.text = adjustedResult().summary()
+        }
+
+        fun update(side: CropSide, value: Int, immediatePreview: Boolean) {
+            state.update(side, value)
+            renderControls()
+            if (immediatePreview) showPreviewNow() else schedulePreview()
+        }
+
+        controls.forEach { control ->
+            val sideName = getString(control.labelRes)
+            control.label.text = sideName
+            control.minus.contentDescription = "$sideName，${getString(R.string.manual_adjust_decrease)}"
+            control.plus.contentDescription = "$sideName，${getString(R.string.manual_adjust_increase)}"
+            control.minus.setOnClickListener {
+                update(control.side, state.value(control.side) - 1, immediatePreview = true)
+            }
+            control.plus.setOnClickListener {
+                update(control.side, state.value(control.side) + 1, immediatePreview = true)
+            }
+            control.slider.addOnChangeListener { _, value, fromUser ->
+                if (fromUser && !rendering) {
+                    update(control.side, value.roundToInt(), immediatePreview = false)
+                }
+            }
+            control.slider.addOnSliderTouchListener(object : Slider.OnSliderTouchListener {
+                override fun onStartTrackingTouch(slider: Slider) = Unit
+
+                override fun onStopTrackingTouch(slider: Slider) {
+                    if (!rendering) showPreviewNow()
+                }
+            })
+        }
+
+        sheet.btnReset.setOnClickListener {
+            state.resetToAutomatic()
+            renderControls()
+            showPreviewNow()
+        }
+        sheet.btnCancel.setOnClickListener { dialog.dismiss() }
+        sheet.btnApply.setOnClickListener {
+            if (currentImage === image && lastResult === original) {
+                previewJob?.cancel()
+                val result = adjustedResult()
+                lastResult = result
+                binding.tvBorderDetail.text = result.summary()
+                restoreCroppedPreview(image, result)
+                applied = true
+                updateActionState()
+            }
+            dialog.dismiss()
+        }
+        dialog.setOnDismissListener {
+            previewJob?.cancel()
+            if (cropAdjustmentDialog === dialog) cropAdjustmentDialog = null
+            binding.rootScrollView.updatePadding(bottom = originalScrollBottomPadding)
+            if (!applied && currentImage === image && lastResult === original) {
+                binding.tvBorderDetail.text = original.summary()
+                restoreCroppedPreview(image, original)
+            }
+            updateActionState()
+        }
+
+        val baseBottomPadding = resources.getDimensionPixelSize(R.dimen.manual_sheet_bottom_padding)
+        ViewCompat.setOnApplyWindowInsetsListener(sheet.root) { view, windowInsets ->
+            val insets = windowInsets.getInsets(
+                WindowInsetsCompat.Type.navigationBars() or WindowInsetsCompat.Type.displayCutout()
+            )
+            view.updatePadding(bottom = baseBottomPadding + insets.bottom)
+            windowInsets
+        }
+
+        dialog.setOnShowListener {
+            configureAdjustmentDialogWindow(dialog, sheet.root)
+            dialog.findViewById<View>(com.google.android.material.R.id.design_bottom_sheet)?.let { bottomSheet ->
+                val sheetHeight = (resources.displayMetrics.heightPixels * MANUAL_SHEET_HEIGHT_RATIO)
+                    .roundToInt()
+                binding.rootScrollView.updatePadding(
+                    bottom = maxOf(
+                        originalScrollBottomPadding,
+                        sheetHeight + resources.getDimensionPixelSize(R.dimen.manual_preview_top_margin)
+                    )
+                )
+                bottomSheet.setBackgroundColor(Color.TRANSPARENT)
+                bottomSheet.layoutParams = bottomSheet.layoutParams.apply { height = sheetHeight }
+                BottomSheetBehavior.from(bottomSheet).apply {
+                    isDraggable = true
+                    isHideable = true
+                    skipCollapsed = false
+                    peekHeight = minOf(
+                        sheetHeight,
+                        resources.getDimensionPixelSize(R.dimen.manual_sheet_collapsed_height)
+                    )
+                    this.state = BottomSheetBehavior.STATE_EXPANDED
+                }
+            }
+            ViewCompat.requestApplyInsets(sheet.root)
+            binding.rootScrollView.post {
+                val previewTopMargin = resources.getDimensionPixelSize(R.dimen.manual_preview_top_margin)
+                binding.rootScrollView.smoothScrollTo(
+                    0,
+                    (binding.cardCroppedPreview.top - previewTopMargin).coerceAtLeast(0)
+                )
+            }
+        }
+
+        showCroppedPreview(image, adjustedResult())
+        renderControls()
+        dialog.show()
+    }
+
     private fun cropAndSave() {
-        val bitmap = currentBitmap ?: run {
+        val image = currentImage ?: run {
             Toast.makeText(this, R.string.no_image_selected, Toast.LENGTH_SHORT).show()
             return
         }
@@ -491,78 +900,209 @@ class MainActivity : AppCompatActivity() {
             Toast.makeText(this, R.string.no_border_detected, Toast.LENGTH_SHORT).show()
             return
         }
-        saveDetectedResult(bitmap, result)
+        saveDetectedResult(image, result)
     }
 
-    private fun saveDetectedResult(bitmap: Bitmap, result: BorderResult) {
-        val cropped = detector.crop(bitmap, result)
-
-        // 检查保存权限
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            saveCroppedImageDirect(cropped)
-        } else {
-            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                == PackageManager.PERMISSION_GRANTED
-            ) {
-                saveCroppedImageDirect(cropped)
-            } else {
-                requestPermission.launch(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
-            }
+    private fun saveDetectedResult(image: LoadedImage, result: BorderResult) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermission.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            return
         }
+        startSave(image, result)
     }
 
     private fun saveCroppedImage() {
-        val bitmap = currentBitmap ?: return
+        val image = currentImage ?: return
         val result = lastResult ?: return
         if (lastDetectionSettings != currentDetectionSettings()) return
-        val cropped = detector.crop(bitmap, result)
-        saveCroppedImageDirect(cropped)
+        saveDetectedResult(image, result)
     }
 
     private fun invalidateDetectionResult() {
+        automaticDetectionJob?.cancel()
+        automaticDetectionJob = null
         detectionJob?.cancel()
         detectionJob = null
         lastResult = null
+        automaticResult = null
         lastDetectionSettings = null
+        cropAdjustmentDialog?.dismiss()
+        cropAdjustmentDialog = null
         if (::binding.isInitialized) {
-            binding.ivCropped.setImageBitmap(null)
-            setDetectionInProgress(false)
+            clearCroppedPreview()
+            updateActionState()
         }
     }
 
-    private fun setDetectionInProgress(inProgress: Boolean) {
-        binding.btnDetect.isEnabled = !inProgress
-        binding.btnCrop.isEnabled = !inProgress
+    private fun updateActionState() {
+        if (!::binding.isInitialized) return
+        val loading = imageLoadJob != null
+        val detecting = detectionJob != null
+        val saving = saveJob != null
+        binding.btnCrop.isEnabled = currentImage != null && !loading && !detecting && !saving
+        binding.btnSelect.isEnabled = !saving
+        binding.cardRecentImage.isEnabled = recentImageSelectable && !saving
+        binding.sbThreshold.isEnabled = !loading && !saving
+        val adjustable = lastResult != null && lastDetectionSettings == currentDetectionSettings()
+        binding.cardBorderInfo.isEnabled = adjustable && !loading && !detecting && !saving
+        binding.tvAdjustHint.visibility = if (adjustable) View.VISIBLE else View.GONE
     }
 
-    /**
-     * 将裁剪后的 Bitmap 保存到相册。
-     * - 文件名：有原文件名时用原文件名，无原文件名时用 image_{timestamp}.{ext}
-     * - 保存目录：固定 Pictures/ImageBorderCrop
-     * - 格式：有原扩展名从扩展名推断；无原扩展名通过 MIME 类型推断，检测失败默认 JPEG
-     */
-    private fun saveCroppedImageDirect(bitmap: Bitmap) {
-        try {
-            val saveInfo = buildSaveInfo()
+    private fun startSave(image: LoadedImage, result: BorderResult) {
+        if (saveJob != null) return
+        showSavingHint(image)
+        saveJob = lifecycleScope.launch {
+            var outputTemp: File? = null
+            try {
+                val saveInfo = buildSaveInfo(image is LoadedImage.Gif)
+                val saved = when (image) {
+                    is LoadedImage.Static -> {
+                        val cropped = withContext(Dispatchers.Default) {
+                            detector.crop(image.bitmap, result)
+                        }
+                        val uri = withContext(Dispatchers.IO) {
+                            publishImage(saveInfo) { output ->
+                                check(cropped.compress(saveInfo.compressFormat!!, 100, output)) {
+                                    "图片编码失败"
+                                }
+                            }
+                        }
+                        SavedImage(uri, cropped)
+                    }
+                    is LoadedImage.Gif -> {
+                        val temp = File.createTempFile("cropped_", ".gif", cacheDir)
+                        outputTemp = temp
+                        withContext(Dispatchers.Default) {
+                            gifProcessor.encodeCropped(image, result, temp) { current, total ->
+                                withContext(Dispatchers.Main.immediate) {
+                                    if (saveJob === coroutineContext[Job]) {
+                                        val progress = getString(
+                                            R.string.encoding_gif_frame,
+                                            current,
+                                            total
+                                        )
+                                        binding.tvBorderDetail.text = progress
+                                    }
+                                }
+                            }
+                        }
+                        val uri = withContext(Dispatchers.IO) {
+                            publishImage(saveInfo) { output ->
+                                FileInputStream(temp).use { it.copyTo(output) }
+                            }
+                        }
+                        val thumbnail = withContext(Dispatchers.Default) {
+                            detector.crop(image.previewFrame, result)
+                        }
+                        SavedImage(uri, thumbnail)
+                    }
+                }
 
-            val values = ContentValues().apply {
-                put(MediaStore.Images.Media.DISPLAY_NAME, saveInfo.filename)
-                put(MediaStore.Images.Media.MIME_TYPE, saveInfo.mimeType)
-                put(MediaStore.Images.Media.RELATIVE_PATH, saveInfo.relativePath)
+                binding.tvBorderDetail.text = result.summary()
+                showRecentImage(RecentImage(saved.uri, saveInfo.filename, saved.thumbnail))
+                Toast.makeText(this@MainActivity, R.string.saved_success, Toast.LENGTH_SHORT).show()
+            } catch (exception: CancellationException) {
+                throw exception
+            } catch (exception: Exception) {
+                Log.e(TAG, "save image failed", exception)
+                Toast.makeText(
+                    this@MainActivity,
+                    getString(R.string.save_failed, exception.message ?: ""),
+                    Toast.LENGTH_LONG
+                ).show()
+            } finally {
+                outputTemp?.delete()
+                if (saveJob === coroutineContext[Job]) {
+                    saveJob = null
+                    binding.btnCrop.setText(R.string.crop_border)
+                    updateActionState()
+                }
             }
+        }
+        updateActionState()
+    }
 
-            val uri = checkNotNull(
+    private fun showSavingHint(image: LoadedImage) {
+        if (image is LoadedImage.Gif) {
+            Toast.makeText(this, R.string.saving_gif_toast, Toast.LENGTH_LONG).show()
+            binding.tvBorderDetail.text = getString(
+                R.string.encoding_gif_frame,
+                0,
+                image.metadata.frameCount
+            )
+        }
+        binding.btnCrop.setText(R.string.saving_action)
+    }
+
+    private fun publishImage(saveInfo: SaveInfo, writer: (java.io.OutputStream) -> Unit): Uri {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            return publishLegacyImage(saveInfo, writer)
+        }
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, saveInfo.filename)
+            put(MediaStore.Images.Media.MIME_TYPE, saveInfo.mimeType)
+            put(MediaStore.Images.Media.RELATIVE_PATH, saveInfo.relativePath)
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        var uri: Uri? = null
+        try {
+            uri = checkNotNull(
                 contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ) { "无法创建媒体文件" }
-            checkNotNull(contentResolver.openOutputStream(uri)).use { outputStream ->
-                check(bitmap.compress(saveInfo.compressFormat, 100, outputStream)) { "图片编码失败" }
-            }
+            checkNotNull(contentResolver.openOutputStream(uri)).use(writer)
+            contentResolver.update(
+                uri,
+                ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) },
+                null,
+                null
+            )
+            return uri
+        } catch (exception: Exception) {
+            uri?.let { contentResolver.delete(it, null, null) }
+            throw exception
+        }
+    }
 
-            binding.ivCropped.setImageBitmap(bitmap)
-            showRecentImage(RecentImage(uri, saveInfo.filename, bitmap))
-            Toast.makeText(this, R.string.saved_success, Toast.LENGTH_SHORT).show()
-        } catch (e: Exception) {
-            Toast.makeText(this, "保存失败: ${e.message}", Toast.LENGTH_LONG).show()
+    @Suppress("DEPRECATION")
+    private fun publishLegacyImage(
+        saveInfo: SaveInfo,
+        writer: (java.io.OutputStream) -> Unit
+    ): Uri {
+        val pictures = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES)
+        val directory = File(pictures, "ImageBorderCrop")
+        check(directory.exists() || directory.mkdirs()) { "无法创建保存目录" }
+        val destination = uniqueDestination(directory, saveInfo.filename)
+        try {
+            FileOutputStream(destination).use(writer)
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, destination.name)
+                put(MediaStore.Images.Media.MIME_TYPE, saveInfo.mimeType)
+                put(MediaStore.Images.Media.DATA, destination.absolutePath)
+                put(MediaStore.Images.Media.SIZE, destination.length())
+            }
+            return checkNotNull(
+                contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            ) { "无法登记媒体文件" }
+        } catch (exception: Exception) {
+            destination.delete()
+            throw exception
+        }
+    }
+
+    private fun uniqueDestination(directory: File, filename: String): File {
+        val requested = File(directory, filename)
+        if (!requested.exists()) return requested
+        val dot = filename.lastIndexOf('.')
+        val base = if (dot > 0) filename.substring(0, dot) else filename
+        val extension = if (dot > 0) filename.substring(dot) else ""
+        var suffix = 1
+        while (true) {
+            val candidate = File(directory, "$base ($suffix)$extension")
+            if (!candidate.exists()) return candidate
+            suffix++
         }
     }
 
@@ -573,7 +1113,7 @@ class MainActivity : AppCompatActivity() {
      *   检测失败默认 JPEG（照片最常见格式），保证 JPG 原图裁剪后仍为 JPG
      * - 保存目录：固定 Pictures/ImageBorderCrop
      */
-    private fun buildSaveInfo(): SaveInfo {
+    private fun buildSaveInfo(isGif: Boolean): SaveInfo {
         val originalName = originalDisplayName
         val baseName: String
         val ext: String
@@ -593,11 +1133,12 @@ class MainActivity : AppCompatActivity() {
             ext = detectExtFromMime()
         }
 
-        val (effectiveExt, mimeType, compressFormat) = when (ext) {
-            "jpg", "jpeg" -> Triple("jpg", "image/jpeg", Bitmap.CompressFormat.JPEG)
-            "png" -> Triple("png", "image/png", Bitmap.CompressFormat.PNG)
-            "webp" -> Triple("webp", "image/webp", Bitmap.CompressFormat.WEBP)
-            else -> Triple("jpg", "image/jpeg", Bitmap.CompressFormat.JPEG) // 默认 JPEG（照片最常见格式）
+        val (effectiveExt, mimeType, compressFormat) = when {
+            isGif -> Triple("gif", "image/gif", null)
+            ext == "jpg" || ext == "jpeg" -> Triple("jpg", "image/jpeg", Bitmap.CompressFormat.JPEG)
+            ext == "png" -> Triple("png", "image/png", Bitmap.CompressFormat.PNG)
+            ext == "webp" -> Triple("webp", "image/webp", Bitmap.CompressFormat.WEBP)
+            else -> Triple("jpg", "image/jpeg", Bitmap.CompressFormat.JPEG)
         }
 
         val filename = "${baseName}.$effectiveExt"
@@ -617,6 +1158,7 @@ class MainActivity : AppCompatActivity() {
                 "image/jpeg" -> "jpg"
                 "image/png" -> "png"
                 "image/webp" -> "webp"
+                "image/gif" -> "gif"
                 else -> "jpg"
             }
         } catch (e: Exception) {
@@ -645,11 +1187,30 @@ class MainActivity : AppCompatActivity() {
     private data class SaveInfo(
         val filename: String,
         val mimeType: String,
-        val compressFormat: Bitmap.CompressFormat,
+        val compressFormat: Bitmap.CompressFormat?,
         val relativePath: String
+    )
+
+    private data class SavedImage(
+        val uri: Uri,
+        val thumbnail: Bitmap
+    )
+
+    private data class CropControl(
+        val side: CropSide,
+        val labelRes: Int,
+        val label: TextView,
+        val slider: Slider,
+        val minus: View,
+        val plus: View,
+        val value: TextView
     )
 
     companion object {
         private const val TAG = "ImageBorderCrop"
+        private const val AUTOMATIC_DETECTION_DEBOUNCE_MS = 250L
+        private const val MANUAL_PREVIEW_DEBOUNCE_MS = 80L
+        private const val MANUAL_SHEET_HEIGHT_RATIO = 0.46f
+        private const val MANUAL_SHEET_DIM_AMOUNT = 0.08f
     }
 }

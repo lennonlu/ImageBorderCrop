@@ -4,4 +4,9 @@
     <dimen name="floating_action_top_padding">8dp</dimen>
     <dimen name="floating_action_bottom_padding">8dp</dimen>
     <dimen name="floating_action_scroll_clearance">92dp</dimen>
+    <dimen name="manual_sheet_bottom_padding">12dp</dimen>
+    <dimen name="manual_sheet_collapsed_height">168dp</dimen>
+    <dimen name="manual_preview_top_margin">48dp</dimen>
+    <dimen name="status_bar_fade_extension">20dp</dimen>
+    <dimen name="status_bar_fade_scroll_distance">28dp</dimen>
 </resources>

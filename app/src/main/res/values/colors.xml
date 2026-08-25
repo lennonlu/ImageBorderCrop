@@ -11,6 +11,8 @@
     <color name="surface_container">#FFF0F3F9</color>
     <color name="surface_container_high">#FFE7EBF3</color>
     <color name="background">#FFF8F9FD</color>
+    <color name="status_scrim_middle">#E6F8F9FD</color>
+    <color name="status_scrim_transparent">#00F8F9FD</color>
     <color name="text_primary">#FF1A1C1E</color>
     <color name="text_secondary">#FF5F6368</color>
     <color name="outline_soft">#FFD7DCE5</color>
