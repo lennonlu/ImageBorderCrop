@@ -19,6 +19,7 @@
 2. 图片载入后会自动检测并显示裁剪结果。
 3. 如有需要，可以调整“强度”，或点击“边框信息”手动微调四边。
 4. 确认预览后，点击“裁剪保存”即可保存到相册。
+<img width="1080" height="2351" alt="image" src="https://github.com/user-attachments/assets/58a09dbb-215e-4bb4-9aa1-50c186cab69e" />
 
 ## 支持格式
 
