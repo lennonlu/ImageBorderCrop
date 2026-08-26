@@ -68,6 +68,32 @@ class BorderDetectorTest {
         assertEquals(DetectionStrategy.COLOR_BORDER, result.strategy)
     }
 
+    @Test
+    fun autoModePrefersThinBlackArtifactOverWhiteDocumentMargin() {
+        val width = 120
+        val height = 100
+        val white = rgb(250, 250, 250)
+        val ink = rgb(80, 80, 80)
+        val image = IntArray(width * height) { white }
+
+        // 顶部 8px 是正文自然留白；之后每行都有少量文字或纹理。
+        for (y in 8 until height - 1) {
+            val start = (y * 7) % (width - 12)
+            for (x in start until start + 12) image[y * width + x] = ink
+        }
+        // 底部只有一条近黑压缩线，应只清理这一行。
+        for (x in 0 until width) image[(height - 1) * width + x] = rgb(4, 4, 4)
+
+        val result = detector.detect(image, width, height, BorderType.AUTO, 30)
+
+        assertEquals(0, result.top)
+        assertEquals(1, result.bottom)
+        assertEquals(0, result.left)
+        assertEquals(0, result.right)
+        assertEquals(BorderType.BLACK, result.borderType)
+        assertEquals(DetectionStrategy.COLOR_BORDER, result.strategy)
+    }
+
     private fun patternedImage(width: Int, height: Int, color: Int) = IntArray(width * height) { color }
 
     private fun fillPattern(image: IntArray, width: Int, left: Int, top: Int, right: Int, bottom: Int) {

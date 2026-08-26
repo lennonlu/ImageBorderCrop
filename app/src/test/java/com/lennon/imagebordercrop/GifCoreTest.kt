@@ -94,6 +94,104 @@ class GifCoreTest {
     }
 
     @Test
+    fun onePixelJitterOnSymmetricLetterboxIsTrimmedAsCompressionSeam() {
+        val result = GifBorderAggregator.aggregate(
+            results = listOf(
+                border(top = 25, bottom = 25, left = 0, right = 0),
+                border(top = 26, bottom = 25, left = 0, right = 0),
+                border(top = 25, bottom = 25, left = 0, right = 0)
+            ),
+            threshold = 30,
+            width = 540,
+            height = 304,
+            sampledContent = emptyList(),
+            sampledContentFrames = 3
+        )
+
+        assertEquals(26, result.top)
+        assertEquals(26, result.bottom)
+        assertEquals(0, result.left)
+        assertEquals(0, result.right)
+    }
+
+    @Test
+    fun onePixelJitterDoesNotChangeAsymmetricGifBorders() {
+        val result = GifBorderAggregator.aggregate(
+            results = listOf(
+                border(top = 25, bottom = 10, left = 0, right = 0),
+                border(top = 26, bottom = 10, left = 0, right = 0)
+            ),
+            threshold = 30,
+            width = 540,
+            height = 304,
+            sampledContent = emptyList(),
+            sampledContentFrames = 2
+        )
+
+        assertEquals(25, result.top)
+        assertEquals(10, result.bottom)
+    }
+
+    @Test
+    fun seamNormalizationNeverOverridesRepresentativeContentProtection() {
+        val result = GifBorderAggregator.aggregate(
+            results = listOf(
+                border(top = 25, bottom = 25, left = 0, right = 0),
+                border(top = 26, bottom = 25, left = 0, right = 0)
+            ),
+            threshold = 30,
+            width = 540,
+            height = 304,
+            sampledContent = listOf(
+                ContentRegion(0, 5, 540, 299, confidence = 0.90f),
+                ContentRegion(0, 5, 540, 299, confidence = 0.91f)
+            ),
+            sampledContentFrames = 2
+        )
+
+        assertEquals(5, result.top)
+        assertEquals(5, result.bottom)
+    }
+
+    @Test
+    fun stableSingleSidedOpaqueGifBorderTrimsOnePixelSeam() {
+        val result = GifBorderAggregator.aggregate(
+            results = List(3) { border(top = 14, bottom = 0, left = 0, right = 0) },
+            threshold = 30,
+            width = 514,
+            height = 266,
+            sampledContent = emptyList(),
+            sampledContentFrames = 3
+        )
+
+        assertEquals(15, result.top)
+        assertEquals(0, result.bottom)
+    }
+
+    @Test
+    fun stableSingleSidedTransparentPaddingIsNeverTrimmedInward() {
+        val transparentPadding = BorderResult(
+            top = 17,
+            bottom = 0,
+            left = 4,
+            right = 0,
+            borderType = BorderType.AUTO,
+            threshold = 30
+        )
+        val result = GifBorderAggregator.aggregate(
+            results = List(3) { transparentPadding },
+            threshold = 30,
+            width = 344,
+            height = 344,
+            sampledContent = emptyList(),
+            sampledContentFrames = 3
+        )
+
+        assertEquals(17, result.top)
+        assertEquals(4, result.left)
+    }
+
+    @Test
     fun unstableSampleBoundaryDoesNotCauseVisibleUndercrop() {
         val result = GifBorderAggregator.aggregate(
             results = listOf(border(20, 20, 20, 20)),
@@ -146,6 +244,25 @@ class GifCoreTest {
 
         assertEquals(2, result.top)
         assertEquals(3, result.bottom)
+    }
+
+    @Test
+    fun gifScanUsesAlphaToProtectDarkSubjectOnTransparentCanvas() {
+        val width = 20
+        val height = 16
+        val transparent = 0x00000000
+        val darkSubject = 0xFF050505.toInt()
+        val pixels = IntArray(width * height) { transparent }
+        for (y in 3 until 13) {
+            for (x in 2 until 18) pixels[y * width + x] = darkSubject
+        }
+
+        val result = BorderDetector().detectGifColorBorder(pixels, width, height, threshold = 30)
+
+        assertEquals(3, result.top)
+        assertEquals(3, result.bottom)
+        assertEquals(2, result.left)
+        assertEquals(2, result.right)
     }
 
     @Test

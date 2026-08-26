@@ -16,6 +16,7 @@ import android.provider.MediaStore
 import android.util.Size
 import android.util.Log
 import android.view.View
+import android.view.WindowManager
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.PickVisualMediaRequest
@@ -668,7 +669,8 @@ class MainActivity : AppCompatActivity() {
             val surfaceColor = ContextCompat.getColor(this, R.color.surface)
             WindowCompat.setDecorFitsSystemWindows(sheetWindow, false)
             sheetWindow.navigationBarColor = surfaceColor
-            sheetWindow.setDimAmount(MANUAL_SHEET_DIM_AMOUNT)
+            sheetWindow.setDimAmount(0f)
+            sheetWindow.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                 sheetWindow.navigationBarDividerColor = surfaceColor
             }
@@ -1211,6 +1213,5 @@ class MainActivity : AppCompatActivity() {
         private const val AUTOMATIC_DETECTION_DEBOUNCE_MS = 250L
         private const val MANUAL_PREVIEW_DEBOUNCE_MS = 80L
         private const val MANUAL_SHEET_HEIGHT_RATIO = 0.46f
-        private const val MANUAL_SHEET_DIM_AMOUNT = 0.08f
     }
 }

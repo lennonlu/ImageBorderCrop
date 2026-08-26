@@ -73,6 +73,49 @@ internal object GifBorderAggregator {
                 stableProtection(protectiveRegions.map { width - it.right }, minimumMatches, horizontalTolerance)
                     ?.let { right = minOf(right, it) }
             }
+
+            val vertical = normalizeSymmetricSeams(
+                first = top,
+                second = bottom,
+                firstValues = results.map { it.top },
+                secondValues = results.map { it.bottom },
+                dimension = height
+            )
+            top = vertical.first
+            bottom = vertical.second
+
+            val horizontal = normalizeSymmetricSeams(
+                first = left,
+                second = right,
+                firstValues = results.map { it.left },
+                secondValues = results.map { it.right },
+                dimension = width
+            )
+            left = horizontal.first
+            right = horizontal.second
+
+            val usesOpaqueColorScan = results.all { it.borderType != BorderType.AUTO }
+            val verticalSingleSide = trimStableSingleSidedSeam(
+                first = top,
+                second = bottom,
+                firstValues = results.map { it.top },
+                secondValues = results.map { it.bottom },
+                dimension = height,
+                enabled = usesOpaqueColorScan
+            )
+            top = verticalSingleSide.first
+            bottom = verticalSingleSide.second
+
+            val horizontalSingleSide = trimStableSingleSidedSeam(
+                first = left,
+                second = right,
+                firstValues = results.map { it.left },
+                secondValues = results.map { it.right },
+                dimension = width,
+                enabled = usesOpaqueColorScan
+            )
+            left = horizontalSingleSide.first
+            right = horizontalSingleSide.second
         }
 
         return BorderResult(
@@ -98,9 +141,88 @@ internal object GifBorderAggregator {
         return if (maximum - minimum <= tolerance) minimum else null
     }
 
+    /**
+     * GIF 调色板和缩放边缘偶尔会让同一条黑边在不同帧间抖动 1px。严格取所有帧
+     * 最小值会让这条接缝在部分帧重新露出。只有两侧都存在、基本对称，而且至少
+     * 一侧的逐帧结果恰好只抖动 1px 时，才统一向内收至较深的边界。
+     */
+    private fun normalizeSymmetricSeams(
+        first: Int,
+        second: Int,
+        firstValues: List<Int>,
+        secondValues: List<Int>,
+        dimension: Int
+    ): Pair<Int, Int> {
+        if (first <= 0 || second <= 0 || firstValues.isEmpty() || secondValues.isEmpty()) {
+            return first to second
+        }
+        // 代表帧的内容区域已经把边界向外保护时，不能再用调色板抖动结果覆盖它。
+        if (first < firstValues.min() || second < secondValues.min()) return first to second
+
+        val firstRange = firstValues.max() - firstValues.min()
+        val secondRange = secondValues.max() - secondValues.min()
+        val hasOnePixelJitter = firstRange == MAX_SEAM_JITTER_PX ||
+            secondRange == MAX_SEAM_JITTER_PX
+        if (!hasOnePixelJitter || firstRange > MAX_SEAM_JITTER_PX || secondRange > MAX_SEAM_JITTER_PX) {
+            return first to second
+        }
+
+        if (kotlin.math.abs(first - second) > MAX_OPPOSITE_EDGE_DIFFERENCE_PX) {
+            return first to second
+        }
+        val minimumDepth = maxOf(MIN_SEAM_DEPTH_PX, (dimension * MIN_SEAM_DEPTH_RATIO).toInt())
+        if (minOf(first, second) < minimumDepth) return first to second
+
+        val normalized = maxOf(
+            first,
+            second,
+            firstValues.max(),
+            secondValues.max()
+        )
+        if (normalized * 2 >= dimension) return first to second
+        return normalized to normalized
+    }
+
+    /**
+     * 不透明 GIF 的单侧色条在缩放或调色板量化后常留下一条 1px 过渡接缝。只有
+     * 所有帧在该侧完全一致、对侧始终为 0，且代表帧没有向外保护边界时才内收 1px。
+     * 透明 GIF 使用 Alpha 外接范围，绝不能应用这项视觉接缝修整。
+     */
+    private fun trimStableSingleSidedSeam(
+        first: Int,
+        second: Int,
+        firstValues: List<Int>,
+        secondValues: List<Int>,
+        dimension: Int,
+        enabled: Boolean
+    ): Pair<Int, Int> {
+        if (!enabled || firstValues.isEmpty() || secondValues.isEmpty()) return first to second
+        val minimumDepth = maxOf(MIN_SEAM_DEPTH_PX, (dimension * MIN_SEAM_DEPTH_RATIO).toInt())
+
+        if (
+            first >= minimumDepth && second == 0 &&
+            firstValues.all { it == first } && secondValues.all { it == 0 } &&
+            first + 1 < dimension
+        ) {
+            return first + 1 to second
+        }
+        if (
+            second >= minimumDepth && first == 0 &&
+            secondValues.all { it == second } && firstValues.all { it == 0 } &&
+            second + 1 < dimension
+        ) {
+            return first to second + 1
+        }
+        return first to second
+    }
+
     private const val MIN_SAMPLE_CONTENT_CONFIDENCE = 0.60f
     private const val STABLE_EDGE_TOLERANCE_RATIO = 0.01f
     private const val MIN_STABLE_EDGE_TOLERANCE_PX = 3
+    private const val MAX_SEAM_JITTER_PX = 1
+    private const val MAX_OPPOSITE_EDGE_DIFFERENCE_PX = 1
+    private const val MIN_SEAM_DEPTH_PX = 2
+    private const val MIN_SEAM_DEPTH_RATIO = 0.01f
 }
 
 internal object GifSampleFrames {

@@ -139,6 +139,7 @@ class BorderDetector(
         threshold: Int
     ): BorderResult {
         require(width > 0 && height > 0 && pixels.size >= width * height) { "图片数据无效" }
+        detectTransparentPadding(pixels, width, height, threshold)?.let { return it }
         val blackResult = detectColorBorder(
             pixels,
             width,
@@ -164,6 +165,68 @@ class BorderDetector(
             autoDetectBorderType(pixels, width, height) == BorderType.BLACK -> blackResult
             else -> whiteResult
         }
+    }
+
+    /**
+     * 透明 GIF 中透明像素与深色主体描边的 RGB 都可能是黑色，继续使用黑边扫描会
+     * 穿过描边而裁到主体。只要画布含透明像素，就按所有 Alpha 可见像素的外接范围
+     * 计算该帧安全边界；全帧聚合仍会取最小裁剪量保护动画中的移动内容。
+     */
+    private fun detectTransparentPadding(
+        pixels: IntArray,
+        width: Int,
+        height: Int,
+        threshold: Int
+    ): BorderResult? {
+        var hasTransparentPixel = false
+        var minX = width
+        var minY = height
+        var maxX = -1
+        var maxY = -1
+        for (y in 0 until height) {
+            val offset = y * width
+            for (x in 0 until width) {
+                val alpha = pixels[offset + x] ushr 24
+                if (alpha == 0) {
+                    hasTransparentPixel = true
+                } else {
+                    if (x < minX) minX = x
+                    if (x > maxX) maxX = x
+                    if (y < minY) minY = y
+                    if (y > maxY) maxY = y
+                }
+            }
+        }
+        if (!hasTransparentPixel || maxX < minX || maxY < minY) return null
+        return BorderResult(
+            top = minY,
+            bottom = height - 1 - maxY,
+            left = minX,
+            right = width - 1 - maxX,
+            borderType = BorderType.AUTO,
+            threshold = threshold
+        )
+    }
+
+    private fun isThinSingleSideArtifact(result: BorderResult): Boolean {
+        val sides = listOf(result.top, result.bottom, result.left, result.right).filter { it > 0 }
+        return sides.size == 1 && sides.single() <= MAX_THIN_ARTIFACT_PX
+    }
+
+    private fun isSingleSidePageMargin(
+        result: BorderResult,
+        width: Int,
+        height: Int
+    ): Boolean {
+        val sides = listOf(
+            result.top to height,
+            result.bottom to height,
+            result.left to width,
+            result.right to width
+        ).filter { it.first > 0 }
+        if (sides.size != 1) return false
+        val (depth, dimension) = sides.single()
+        return depth >= maxOf(MIN_PAGE_MARGIN_PX, (dimension * MIN_PAGE_MARGIN_RATIO).toInt())
     }
 
     /** GIF 代表帧使用与静态截图相同的主要内容区域检测，结果只用于限制误裁。 */
@@ -198,8 +261,8 @@ class BorderDetector(
     }
 
     /**
-     * 自动模式分别扫描黑边和白边，优先采用实际去除面积更大的纯色结果。
-     * 这能处理画面整体偏亮、但只有底部存在一条纯黑边的情况。
+     * 自动模式分别扫描黑边和白边，通常采用实际去除面积更大的纯色结果；但白底
+     * 页面留白与 1–2px 近黑瑕疵冲突时优先清理细线。
      */
     private fun detectAutoColorBorder(
         pixels: IntArray,
@@ -212,6 +275,14 @@ class BorderDetector(
         val fullArea = width.toLong() * height
         val blackRemovedArea = fullArea - cropArea(width, height, blackResult)
         val whiteRemovedArea = fullArea - cropArea(width, height, whiteResult)
+        // 白底文档或表情图顶部的正文留白不是外加边框；若另一侧同时存在 1–2px
+        // 的近黑压缩线，优先清理这条细线，避免“面积越大越优先”误删页面留白。
+        if (
+            isThinSingleSideArtifact(blackResult) &&
+            isSingleSidePageMargin(whiteResult, width, height)
+        ) {
+            return blackResult
+        }
         return when {
             blackRemovedArea > whiteRemovedArea -> blackResult
             whiteRemovedArea > blackRemovedArea -> whiteResult
@@ -595,6 +666,9 @@ class BorderDetector(
         private const val HOMOGENEOUS_BAND_DEPTH = 0.05f
         private const val HOMOGENEOUS_RATIO = 0.90f
         private const val HOMOGENEOUS_COLOR_DISTANCE = 24
+        private const val MAX_THIN_ARTIFACT_PX = 2
+        private const val MIN_PAGE_MARGIN_PX = 4
+        private const val MIN_PAGE_MARGIN_RATIO = 0.02f
         private const val GIF_BORDER_PIXEL_RATIO = 0.60f
         private const val GIF_EMBEDDED_CONTENT_MIN_BORDER_RATIO = GIF_BORDER_PIXEL_RATIO
         private const val GIF_EMBEDDED_CONTENT_MIN_RATIO = 0.02f
