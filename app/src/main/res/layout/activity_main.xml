@@ -257,9 +257,13 @@
                 android:textStyle="bold" />
 
             <com.google.android.material.card.MaterialCardView
+                android:id="@+id/cardOriginalPreview"
                 android:layout_width="match_parent"
                 android:layout_height="170dp"
                 android:layout_marginTop="4dp"
+                android:clickable="true"
+                android:contentDescription="@string/original_image_select"
+                android:focusable="true"
                 app:cardBackgroundColor="@color/surface_container_high"
                 app:cardCornerRadius="14dp"
                 app:cardElevation="0dp"
@@ -269,8 +273,35 @@
                     android:id="@+id/ivOriginal"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
-                    android:contentDescription="@string/original_image"
+                    android:importantForAccessibility="no"
                     android:scaleType="fitCenter" />
+
+                <LinearLayout
+                    android:id="@+id/originalSelectHint"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:duplicateParentState="true"
+                    android:gravity="center"
+                    android:importantForAccessibility="no"
+                    android:orientation="vertical">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:includeFontPadding="false"
+                        android:text="@string/select_image_plus"
+                        android:textColor="@color/primary"
+                        android:textSize="32sp" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:text="@string/original_image_empty_hint"
+                        android:textColor="@color/primary_dark"
+                        android:textSize="13sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 
             <TextView

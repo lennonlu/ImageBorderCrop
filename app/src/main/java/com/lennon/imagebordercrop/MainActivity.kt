@@ -122,7 +122,11 @@ class MainActivity : AppCompatActivity() {
 
         // 选择图片（Photo Picker）
         binding.btnSelect.setOnClickListener {
-            pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            launchImagePicker()
+        }
+
+        binding.cardOriginalPreview.setOnClickListener {
+            launchImagePicker()
         }
 
         binding.cardRecentImage.setOnClickListener {
@@ -142,6 +146,10 @@ class MainActivity : AppCompatActivity() {
 
         // 处理通过系统"分享"接收到的图片
         handleShareIntent(intent)
+    }
+
+    private fun launchImagePicker() {
+        pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
 
     override fun onResume() {
@@ -375,6 +383,7 @@ class MainActivity : AppCompatActivity() {
         imageLoadJob?.cancel()
         invalidateDetectionResult()
         clearCurrentImage()
+        binding.originalSelectHint.visibility = View.GONE
         currentImageUri = null
         originalDisplayName = null
         binding.tvBorderDetail.setText(R.string.loading_image)
@@ -428,6 +437,7 @@ class MainActivity : AppCompatActivity() {
                 throw exception
             } catch (exception: Exception) {
                 Log.w(TAG, "load image failed: $uri", exception)
+                binding.originalSelectHint.visibility = View.VISIBLE
                 binding.tvBorderDetail.text = getString(
                     R.string.image_load_failed_detail,
                     exception.message ?: getString(R.string.image_load_failed)
@@ -446,6 +456,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showOriginalPreview(image: LoadedImage) {
         Glide.with(this).clear(binding.ivOriginal)
+        binding.originalSelectHint.visibility = View.GONE
         when (image) {
             is LoadedImage.Static -> binding.ivOriginal.setImageBitmap(image.bitmap)
             is LoadedImage.Gif -> Glide.with(this)
@@ -461,6 +472,7 @@ class MainActivity : AppCompatActivity() {
             Glide.with(this).clear(binding.ivOriginal)
             clearCroppedPreview()
             binding.ivOriginal.setImageDrawable(null)
+            binding.originalSelectHint.visibility = View.VISIBLE
         }
         currentImage?.let(::disposeLoadedImage)
         currentImage = null
@@ -946,6 +958,7 @@ class MainActivity : AppCompatActivity() {
         val saving = saveJob != null
         binding.btnCrop.isEnabled = currentImage != null && !loading && !detecting && !saving
         binding.btnSelect.isEnabled = !saving
+        binding.cardOriginalPreview.isEnabled = !saving
         binding.cardRecentImage.isEnabled = recentImageSelectable && !saving
         binding.sbThreshold.isEnabled = !loading && !saving
         val adjustable = lastResult != null && lastDetectionSettings == currentDetectionSettings()

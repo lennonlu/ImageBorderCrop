@@ -2,6 +2,8 @@
 <resources>
     <string name="app_name">来裁</string>
     <string name="select_image">选图</string>
+    <string name="select_image_plus">＋</string>
+    <string name="original_image_empty_hint">请选择要处理的图片</string>
     <string name="recent_image">最近图片</string>
     <string name="recent_image_permission">点击允许访问图库，之后可直接选择最新图片</string>
     <string name="recent_image_tap">点击使用最新图片</string>
@@ -11,6 +13,7 @@
     <string name="crop_border">裁剪保存</string>
     <string name="threshold">强度</string>
     <string name="original_image">原图</string>
+    <string name="original_image_select">原图，点击选择图片</string>
     <string name="cropped_image">裁剪结果</string>
     <string name="border_info">边框信息</string>
     <string name="manual_adjust_hint">点击调整</string>
