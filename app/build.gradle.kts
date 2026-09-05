@@ -19,8 +19,8 @@ android {
         applicationId = "com.lennon.imagebordercrop"
         minSdk = 24
         targetSdk = 34
-        versionCode = 7
-        versionName = "1.2.2"
+        versionCode = 8
+        versionName = "1.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
