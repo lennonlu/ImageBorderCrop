@@ -15,7 +15,9 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.util.Size
 import android.util.Log
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.widget.TextView
 import android.widget.Toast
@@ -30,6 +32,7 @@ import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import com.bumptech.glide.Glide
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.lennon.imagebordercrop.databinding.ActivityMainBinding
 import com.lennon.imagebordercrop.databinding.BottomSheetCropAdjustmentBinding
 import com.google.android.material.bottomsheet.BottomSheetDialog
@@ -63,6 +66,8 @@ class MainActivity : AppCompatActivity() {
     private var staticCroppedPreview: Bitmap? = null
     private var recentImageUri: Uri? = null
     private var recentImageSelectable = true
+    private var batchSession: BatchSession<Uri>? = null
+    private var queueReplacementConfirmationVisible = false
     private val detector = BorderDetector()
     private val gifProcessor = GifProcessor(detector)
 
@@ -71,11 +76,15 @@ class MainActivity : AppCompatActivity() {
 
     // Photo Picker 选图回调
     private val pickMedia = registerForActivityResult(
-        ActivityResultContracts.PickVisualMedia()
-    ) { uri ->
-        if (uri != null) {
-            loadImage(uri, takePersistablePermission = true)
-        }
+        ActivityResultContracts.PickMultipleVisualMedia(BatchSession.MAX_ITEMS)
+    ) { selectedUris ->
+        val uris = selectedUris.distinct().take(BatchSession.MAX_ITEMS)
+        if (uris.isEmpty()) return@registerForActivityResult
+
+        uris.forEach(::takePersistableReadPermission)
+        batchSession = if (uris.size > 1) BatchSession(uris) else null
+        updateActionState()
+        loadImage(uris.first(), takePersistablePermission = false)
     }
 
     private val requestRecentImagePermissions = registerForActivityResult(
@@ -122,7 +131,12 @@ class MainActivity : AppCompatActivity() {
 
         // 选择图片（Photo Picker）
         binding.btnSelect.setOnClickListener {
-            launchImagePicker()
+            val batch = batchSession
+            if (batch != null && !batch.isLast) {
+                skipCurrentBatchItem(batch)
+            } else {
+                launchImagePicker()
+            }
         }
 
         binding.cardOriginalPreview.setOnClickListener {
@@ -130,9 +144,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.cardRecentImage.setOnClickListener {
-            recentImageUri?.let { uri ->
-                loadImage(uri, takePersistablePermission = false)
-            } ?: requestRecentImageAccess()
+            if (batchSession != null) {
+                launchImagePicker()
+            } else {
+                recentImageUri?.let { uri ->
+                    loadImage(uri, takePersistablePermission = false)
+                } ?: requestRecentImageAccess()
+            }
         }
 
         binding.cardBorderInfo.setOnClickListener {
@@ -149,8 +167,36 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun launchImagePicker() {
+        if (isBusy()) return
+        if (batchSession?.isLast == false) {
+            if (queueReplacementConfirmationVisible) return
+            queueReplacementConfirmationVisible = true
+            val dialog = MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.batch_replace_title)
+                .setMessage(R.string.batch_replace_message)
+                .setNegativeButton(R.string.manual_adjust_cancel, null)
+                .setPositiveButton(R.string.batch_replace_confirm) { _, _ -> openImagePicker() }
+                .create()
+            dialog.setOnDismissListener { queueReplacementConfirmationVisible = false }
+            dialog.show()
+            return
+        }
+        openImagePicker()
+    }
+
+    private fun openImagePicker() {
         pickMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
     }
+
+    private fun takePersistableReadPermission(uri: Uri) {
+        try {
+            contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        } catch (_: SecurityException) {
+            // 部分 Photo Picker 或云端 URI 不支持持久化权限，当前会话仍可正常读取。
+        }
+    }
+
+    private fun isBusy(): Boolean = imageLoadJob != null || detectionJob != null || saveJob != null
 
     override fun onResume() {
         super.onResume()
@@ -364,7 +410,11 @@ class MainActivity : AppCompatActivity() {
                 @Suppress("DEPRECATION")
                 intent.getParcelableExtra(Intent.EXTRA_STREAM)
             }
-            sharedUri?.let { loadImage(it, takePersistablePermission = false) }
+            sharedUri?.let {
+                batchSession = null
+                updateActionState()
+                loadImage(it, takePersistablePermission = false)
+            }
         }
     }
 
@@ -391,13 +441,7 @@ class MainActivity : AppCompatActivity() {
 
         // Photo Picker 返回的 URI 支持持久化权限；分享或 MediaStore URI 不支持/不需要
         if (takePersistablePermission) {
-            try {
-                contentResolver.takePersistableUriPermission(
-                    uri, Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            } catch (e: SecurityException) {
-                // 某些 URI 不支持持久化权限，忽略即可
-            }
+            takePersistableReadPermission(uri)
         }
 
         imageLoadJob = lifecycleScope.launch {
@@ -676,6 +720,88 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun installRepeatingPress(
+        view: View,
+        onSingleClick: () -> Unit,
+        onRepeatStep: () -> Unit,
+        onRepeatFinished: () -> Unit
+    ): () -> Unit {
+        var pressing = false
+        var repeated = false
+
+        fun finishPress(refreshPreview: Boolean) {
+            val shouldRefresh = refreshPreview && repeated
+            pressing = false
+            repeated = false
+            view.isPressed = false
+            if (shouldRefresh) onRepeatFinished()
+        }
+
+        val repeatAction = object : Runnable {
+            override fun run() {
+                if (!pressing || !view.isEnabled) {
+                    finishPress(refreshPreview = true)
+                    return
+                }
+                repeated = true
+                onRepeatStep()
+                if (pressing && view.isEnabled) {
+                    view.postDelayed(this, MANUAL_REPEAT_INTERVAL_MS)
+                } else {
+                    finishPress(refreshPreview = true)
+                }
+            }
+        }
+
+        fun cancelCallbacks(refreshPreview: Boolean) {
+            view.removeCallbacks(repeatAction)
+            finishPress(refreshPreview)
+        }
+
+        view.setOnClickListener { onSingleClick() }
+        view.setOnTouchListener { touchedView, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (!touchedView.isEnabled) return@setOnTouchListener false
+                    cancelCallbacks(refreshPreview = false)
+                    pressing = true
+                    touchedView.isPressed = true
+                    touchedView.postDelayed(
+                        repeatAction,
+                        ViewConfiguration.getLongPressTimeout().toLong()
+                    )
+                    true
+                }
+
+                MotionEvent.ACTION_MOVE -> {
+                    val inside = event.x >= 0f && event.x < touchedView.width &&
+                        event.y >= 0f && event.y < touchedView.height
+                    if (!inside) {
+                        cancelCallbacks(refreshPreview = true)
+                    }
+                    true
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    val shouldClick = pressing && !repeated && touchedView.isPressed
+                    val shouldRefresh = repeated
+                    cancelCallbacks(refreshPreview = shouldRefresh)
+                    if (shouldClick) touchedView.performClick()
+                    true
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    cancelCallbacks(refreshPreview = true)
+                    true
+                }
+
+                else -> true
+            }
+        }
+
+        return { cancelCallbacks(refreshPreview = false) }
+    }
+
     private fun configureAdjustmentDialogWindow(dialog: BottomSheetDialog, sheetRoot: View) {
         dialog.window?.let { sheetWindow ->
             val surfaceColor = ContextCompat.getColor(this, R.color.surface)
@@ -751,6 +877,7 @@ class MainActivity : AppCompatActivity() {
         var rendering = false
         var applied = false
         var previewJob: Job? = null
+        val repeatPressCleanups = mutableListOf<() -> Unit>()
 
         fun adjustedResult(): BorderResult = state.toResult(original)
 
@@ -802,12 +929,26 @@ class MainActivity : AppCompatActivity() {
             control.label.text = sideName
             control.minus.contentDescription = "$sideName，${getString(R.string.manual_adjust_decrease)}"
             control.plus.contentDescription = "$sideName，${getString(R.string.manual_adjust_increase)}"
-            control.minus.setOnClickListener {
-                update(control.side, state.value(control.side) - 1, immediatePreview = true)
-            }
-            control.plus.setOnClickListener {
-                update(control.side, state.value(control.side) + 1, immediatePreview = true)
-            }
+            repeatPressCleanups += installRepeatingPress(
+                control.minus,
+                onSingleClick = {
+                    update(control.side, state.value(control.side) - 1, immediatePreview = true)
+                },
+                onRepeatStep = {
+                    update(control.side, state.value(control.side) - 1, immediatePreview = false)
+                },
+                onRepeatFinished = ::showPreviewNow
+            )
+            repeatPressCleanups += installRepeatingPress(
+                control.plus,
+                onSingleClick = {
+                    update(control.side, state.value(control.side) + 1, immediatePreview = true)
+                },
+                onRepeatStep = {
+                    update(control.side, state.value(control.side) + 1, immediatePreview = false)
+                },
+                onRepeatFinished = ::showPreviewNow
+            )
             control.slider.addOnChangeListener { _, value, fromUser ->
                 if (fromUser && !rendering) {
                     update(control.side, value.roundToInt(), immediatePreview = false)
@@ -842,6 +983,7 @@ class MainActivity : AppCompatActivity() {
         }
         dialog.setOnDismissListener {
             previewJob?.cancel()
+            repeatPressCleanups.forEach { it() }
             if (cropAdjustmentDialog === dialog) cropAdjustmentDialog = null
             binding.rootScrollView.updatePadding(bottom = originalScrollBottomPadding)
             if (!applied && currentImage === image && lastResult === original) {
@@ -956,21 +1098,54 @@ class MainActivity : AppCompatActivity() {
         val loading = imageLoadJob != null
         val detecting = detectionJob != null
         val saving = saveJob != null
-        binding.btnCrop.isEnabled = currentImage != null && !loading && !detecting && !saving
-        binding.btnSelect.isEnabled = !saving
-        binding.cardOriginalPreview.isEnabled = !saving
-        binding.cardRecentImage.isEnabled = recentImageSelectable && !saving
+        val idle = !loading && !detecting && !saving
+        updateBatchUi(saving)
+        binding.btnCrop.isEnabled = currentImage != null && idle
+        binding.btnSelect.isEnabled = idle
+        binding.cardOriginalPreview.isEnabled = idle
+        binding.cardRecentImage.isEnabled = idle && (batchSession != null || recentImageSelectable)
         binding.sbThreshold.isEnabled = !loading && !saving
         val adjustable = lastResult != null && lastDetectionSettings == currentDetectionSettings()
-        binding.cardBorderInfo.isEnabled = adjustable && !loading && !detecting && !saving
+        binding.cardBorderInfo.isEnabled = adjustable && idle
         binding.tvAdjustHint.visibility = if (adjustable) View.VISIBLE else View.GONE
+    }
+
+    private fun updateBatchUi(saving: Boolean = saveJob != null) {
+        val batch = batchSession
+        binding.tvBatchProgress.visibility = if (batch == null) View.GONE else View.VISIBLE
+        if (batch != null) {
+            binding.tvBatchProgress.text = getString(
+                R.string.batch_progress,
+                batch.position,
+                batch.total
+            )
+        }
+        binding.btnSelect.setText(
+            if (batch != null && !batch.isLast) R.string.batch_skip else R.string.select_image
+        )
+        binding.btnCrop.setText(
+            when {
+                saving -> R.string.saving_action
+                batch != null && !batch.isLast -> R.string.batch_save_next
+                else -> R.string.crop_border
+            }
+        )
+    }
+
+    private fun skipCurrentBatchItem(batch: BatchSession<Uri>) {
+        if (batchSession !== batch || batch.isLast || isBusy()) return
+        val next = batch.skipAndAdvance() ?: return
+        updateActionState()
+        loadImage(next, takePersistablePermission = false)
     }
 
     private fun startSave(image: LoadedImage, result: BorderResult) {
         if (saveJob != null) return
+        val batchAtStart = batchSession
         showSavingHint(image)
         saveJob = lifecycleScope.launch {
             var outputTemp: File? = null
+            var savedSuccessfully = false
             try {
                 val saveInfo = buildSaveInfo(image is LoadedImage.Gif)
                 val saved = when (image) {
@@ -1018,7 +1193,10 @@ class MainActivity : AppCompatActivity() {
 
                 binding.tvBorderDetail.text = result.summary()
                 showRecentImage(RecentImage(saved.uri, saveInfo.filename, saved.thumbnail))
-                Toast.makeText(this@MainActivity, R.string.saved_success, Toast.LENGTH_SHORT).show()
+                savedSuccessfully = true
+                if (batchAtStart == null) {
+                    Toast.makeText(this@MainActivity, R.string.saved_success, Toast.LENGTH_SHORT).show()
+                }
             } catch (exception: CancellationException) {
                 throw exception
             } catch (exception: Exception) {
@@ -1032,12 +1210,32 @@ class MainActivity : AppCompatActivity() {
                 outputTemp?.delete()
                 if (saveJob === coroutineContext[Job]) {
                     saveJob = null
-                    binding.btnCrop.setText(R.string.crop_border)
                     updateActionState()
+                    if (savedSuccessfully) finishSuccessfulSave(batchAtStart)
                 }
             }
         }
         updateActionState()
+    }
+
+    private fun finishSuccessfulSave(batchAtStart: BatchSession<Uri>?) {
+        if (batchAtStart == null || batchSession !== batchAtStart) return
+        val next = batchAtStart.saveAndAdvance()
+        if (next != null) {
+            updateActionState()
+            loadImage(next, takePersistablePermission = false)
+            return
+        }
+
+        val savedCount = batchAtStart.savedCount
+        val skippedCount = batchAtStart.skippedCount
+        batchSession = null
+        updateActionState()
+        Toast.makeText(
+            this,
+            getString(R.string.batch_complete, savedCount, skippedCount),
+            Toast.LENGTH_LONG
+        ).show()
     }
 
     private fun showSavingHint(image: LoadedImage) {
@@ -1225,6 +1423,7 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "ImageBorderCrop"
         private const val AUTOMATIC_DETECTION_DEBOUNCE_MS = 250L
         private const val MANUAL_PREVIEW_DEBOUNCE_MS = 80L
+        private const val MANUAL_REPEAT_INTERVAL_MS = 55L
         private const val MANUAL_SHEET_HEIGHT_RATIO = 0.46f
     }
 }
