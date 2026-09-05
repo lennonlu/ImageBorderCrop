@@ -892,9 +892,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         fun schedulePreview() {
-            previewJob?.cancel()
+            // 持续输入时保留已排定的刷新，避免长按/拖动不断重置等待时间。
+            if (previewJob?.isActive == true) return
             previewJob = lifecycleScope.launch {
                 delay(MANUAL_PREVIEW_DEBOUNCE_MS)
+                previewJob = null
                 showPreviewNow()
             }
         }

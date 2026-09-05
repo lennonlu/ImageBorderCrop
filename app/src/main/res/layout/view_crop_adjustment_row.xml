@@ -8,7 +8,7 @@
 
     <TextView
         android:id="@+id/tvSideLabel"
-        android:layout_width="44dp"
+        android:layout_width="24dp"
         android:layout_height="wrap_content"
         android:textColor="@color/text_primary"
         android:textSize="14sp"
@@ -26,9 +26,9 @@
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnMinus"
         style="@style/Widget.Material3.Button.TonalButton"
-        android:layout_width="48dp"
+        android:layout_width="40dp"
         android:layout_height="48dp"
-        android:layout_marginStart="4dp"
+        android:layout_marginStart="0dp"
         android:contentDescription="@string/manual_adjust_decrease"
         android:insetTop="4dp"
         android:insetBottom="4dp"
@@ -52,7 +52,7 @@
     <com.google.android.material.button.MaterialButton
         android:id="@+id/btnPlus"
         style="@style/Widget.Material3.Button.TonalButton"
-        android:layout_width="48dp"
+        android:layout_width="40dp"
         android:layout_height="48dp"
         android:contentDescription="@string/manual_adjust_increase"
         android:insetTop="4dp"
